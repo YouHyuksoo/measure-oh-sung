@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(D:\\Project\\measure-oh-sung\\backend\\.venv\\Scripts\\python.exe -m alembic upgrade head)",
+      "Bash(python -m alembic revision:*)",
+      "Bash(python:*)",
+      "Bash(if exist measurements.db del measurements.db)",
+      "Bash(sqlite3:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

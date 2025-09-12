@@ -1,0 +1,22 @@
+{
+  "name": "measure-oh-sung",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Python 백엔드와 Next.js 프론트엔드로 구성된 프로젝트",
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm run start",
+    "lint": "cd frontend && npm run lint",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "setup": "npm run install:frontend && npm run install:backend"
+  },
+  "workspaces": [
+    "frontend"
+  ],
+  "devDependencies": {
+    "eslint": "^9",
+    "@eslint/eslintrc": "^3"
+  }
+}

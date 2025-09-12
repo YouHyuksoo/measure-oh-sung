@@ -1,0 +1,58 @@
+---
+description: Frontend 컴포넌트 개발 규칙
+globs: ["frontend/src/**/*.tsx", "frontend/src/**/*.ts"]
+alwaysApply: false
+---
+
+# Frontend 컴포넌트 개발 규칙
+
+## React 컴포넌트 구조
+
+- 함수형 컴포넌트와 React Hooks 사용
+- Props 인터페이스를 컴포넌트 상단에 정의
+- 컴포넌트는 PascalCase로 명명
+- 재사용 가능한 컴포넌트로 설계
+
+## TypeScript 규칙
+
+- 모든 props에 타입 정의 필수
+- any 타입 사용 금지
+- 인터페이스는 PascalCase로 명명
+- 타입 정의는 별도 파일로 분리 가능
+
+## 스타일링
+
+- Tailwind CSS 클래스 사용
+- 인라인 스타일 사용 금지
+- 반응형 디자인 고려
+- 일관된 색상 팔레트 사용
+
+## 예시 템플릿
+
+```tsx
+interface ComponentProps {
+  title: string;
+  isActive?: boolean;
+  onClick: () => void;
+}
+
+export const ComponentName: React.FC<ComponentProps> = ({
+  title,
+  isActive = false,
+  onClick,
+}) => {
+  return (
+    <div className="p-4 bg-white rounded-lg shadow-md">
+      <h2 className="text-xl font-bold">{title}</h2>
+      <button
+        onClick={onClick}
+        className={`px-4 py-2 rounded ${
+          isActive ? "bg-blue-500 text-white" : "bg-gray-200"
+        }`}
+      >
+        Click me
+      </button>
+    </div>
+  );
+};
+```

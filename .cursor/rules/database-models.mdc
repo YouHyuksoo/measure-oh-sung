@@ -1,0 +1,69 @@
+---
+description: 데이터베이스 모델 개발 규칙
+globs: ["backend/app/models/**/*.py"]
+alwaysApply: false
+---
+
+# 데이터베이스 모델 개발 규칙
+
+## SQLAlchemy 모델 구조
+
+- SQLAlchemy ORM 사용
+- 모델은 `app/models/` 폴더에 정의
+- 관계 설정은 명확하게 정의
+- 인덱스는 성능을 고려하여 설정
+
+## 모델 명명 규칙
+
+- 클래스명은 PascalCase
+- 테이블명은 snake_case
+- 컬럼명은 snake_case
+- 외래키는 `{테이블명}_id` 형식
+
+## 관계 설정
+
+- One-to-Many: `relationship()` 사용
+- Many-to-Many: `Table()` 사용
+- 외래키는 `ForeignKey()` 사용
+- 관계는 양방향으로 설정
+
+## 예시 템플릿
+
+```python
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # One-to-Many 관계
+    items = relationship("Item", back_populates="owner")
+
+class Item(Base):
+    __tablename__ = "items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True, nullable=False)
+    description = Column(String)
+    price = Column(Float, nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Many-to-One 관계
+    owner = relationship("User", back_populates="items")
+```
+
+## 마이그레이션 규칙
+
+- Alembic을 사용한 마이그레이션
+- 스키마 변경 시 마이그레이션 파일 생성
+- 프로덕션 배포 전 마이그레이션 테스트
