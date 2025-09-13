@@ -1,5 +1,5 @@
-from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import crud, schemas
@@ -12,9 +12,13 @@ def read_test_settings(
     db: Session = Depends(get_db),
     skip: int = 0,
     limit: int = 100,
+    inspection_model_id: Optional[int] = Query(None, description="특정 검사 모델의 설정만 조회")
 ) -> Any:
     """모든 테스트 설정을 조회합니다."""
-    test_settings = crud.test_settings.get_multi(db, skip=skip, limit=limit)
+    if inspection_model_id is not None:
+        test_settings = crud.test_settings.get_by_model(db, inspection_model_id=inspection_model_id)
+    else:
+        test_settings = crud.test_settings.get_multi(db, skip=skip, limit=limit)
     return test_settings
 
 @router.post("/", response_model=schemas.TestSettingsResponse)
@@ -70,9 +74,13 @@ def delete_test_settings(
 def get_active_test_settings(
     *,
     db: Session = Depends(get_db),
+    inspection_model_id: Optional[int] = Query(None, description="특정 검사 모델의 활성 설정 조회")
 ) -> Any:
     """현재 활성화된 테스트 설정을 조회합니다."""
-    test_settings = crud.test_settings.get_active(db=db)
+    if inspection_model_id is not None:
+        test_settings = crud.test_settings.get_active_by_model(db=db, inspection_model_id=inspection_model_id)
+    else:
+        test_settings = crud.test_settings.get_active(db=db)
     if not test_settings:
         raise HTTPException(status_code=404, detail="No active test settings found")
     return test_settings

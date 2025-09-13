@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, Float, Boolean, String
+from sqlalchemy import Column, Integer, Float, Boolean, String, ForeignKey
+from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
 class TestSettings(Base, TimestampMixin):
@@ -18,3 +19,9 @@ class TestSettings(Base, TimestampMixin):
     # 설정 이름 및 설명
     name = Column(String(100), nullable=False, comment="설정 이름")
     description = Column(String(255), comment="설정 설명")
+
+    # 검사 모델 연결 (특정 모델용 설정인지)
+    inspection_model_id = Column(Integer, ForeignKey("inspection_models.id"), nullable=True, comment="검사 모델 ID (NULL=전역 설정)")
+
+    # 관계 설정
+    inspection_model = relationship("InspectionModel", back_populates="test_settings")

@@ -12,6 +12,9 @@ class TestSettingsBase(BaseModel):
     name: str
     description: Optional[str] = None
 
+    # 검사 모델 연결 (None이면 전역 설정)
+    inspection_model_id: Optional[int] = None
+
 class TestSettingsCreate(TestSettingsBase):
     pass
 
@@ -24,6 +27,9 @@ class TestSettingsUpdate(BaseModel):
     is_active: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
+
+    # 검사 모델 연결
+    inspection_model_id: Optional[int] = None
 
 class TestSettingsResponse(TestSettingsBase):
     id: int

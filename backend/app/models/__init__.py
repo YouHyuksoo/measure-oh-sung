@@ -1,15 +1,17 @@
 from .base import Base
-from .test_settings import TestSettings  
+from .test_settings import TestSettings
 from .inspection_model import InspectionModel
 from .measurement import Measurement
 from .device import Device
 from .system_log import SystemLog
+from .inspection_timer import InspectionTimerSettings
 
 __all__ = [
     "Base",
     "TestSettings",
-    "InspectionModel", 
+    "InspectionModel",
     "Measurement",
     "Device",
-    "SystemLog"
+    "SystemLog",
+    "InspectionTimerSettings"
 ]

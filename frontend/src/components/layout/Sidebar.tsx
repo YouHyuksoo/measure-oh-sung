@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Play,
   Home,
+  Shield,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -31,10 +32,16 @@ const menuItems = [
     description: "시스템 현황 및 개요",
   },
   {
-    title: "검사 실행",
+    title: "Power검사",
     href: "/inspection",
     icon: Play,
     description: "바코드 스캔 및 실시간 측정",
+  },
+  {
+    title: "3대안전검사",
+    href: "/safety-inspection",
+    icon: Shield,
+    description: "내전압, 절연저항, 접지연속 검사",
   },
   {
     title: "측정 데이터",
@@ -84,59 +91,11 @@ export function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         isCollapsed ? "w-16" : "w-72"
       )}
     >
-      {/* 헤더 섹션 */}
-      <div
-        className={cn(
-          "border-b border-slate-700/50",
-          isCollapsed ? "p-2" : "p-4"
-        )}
-      >
-        <div
-          className={cn(
-            "flex items-center",
-            isCollapsed ? "justify-center" : "justify-between"
-          )}
-        >
-          {!isCollapsed && (
-            <div className="flex items-center space-x-3">
-              <div className="h-8 w-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <Activity className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">Measure OS</h2>
-                <p className="text-xs text-slate-400">계측 시스템</p>
-              </div>
-            </div>
-          )}
-          {isCollapsed && (
-            <div className="h-8 w-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center mb-2">
-              <Activity className="h-5 w-5 text-white" />
-            </div>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            className={cn(
-              "text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all duration-200",
-              isCollapsed ? "h-8 w-8" : "h-8 w-8"
-            )}
-          >
-            {isCollapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-            <span className="sr-only">사이드바 토글</span>
-          </Button>
-        </div>
-      </div>
-
       {/* 메뉴 항목 */}
       <nav
         className={cn(
           "flex-1 space-y-3 overflow-y-auto",
-          isCollapsed ? "p-2" : "p-4"
+          isCollapsed ? "p-2 pt-4" : "p-4 pt-6"
         )}
       >
         {menuItems.map((item) => {

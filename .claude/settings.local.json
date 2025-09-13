@@ -6,7 +6,14 @@
       "Bash(python -m alembic revision:*)",
       "Bash(python:*)",
       "Bash(if exist measurements.db del measurements.db)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(npm run lint)",
+      "Bash(curl:*)",
+      "Bash(tasklist)",
+      "Read(//d/**)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(.venvScriptspython.exe -m app.db.init_db)"
     ],
     "deny": [],
     "ask": []

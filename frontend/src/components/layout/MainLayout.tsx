@@ -69,10 +69,14 @@ export function MainLayout({ children }: MainLayoutProps) {
         <main
           className={cn(
             "flex-1 transition-all duration-300",
-            !isMobile && (sidebarCollapsed ? "lg:ml-16" : "lg:ml-64")
+            isMobile 
+              ? "ml-0" 
+              : sidebarCollapsed 
+                ? "ml-16" 
+                : "ml-72"
           )}
         >
-          <div className="container mx-auto p-6">
+          <div className="w-full p-6">
             {children}
           </div>
         </main>

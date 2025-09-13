@@ -11,8 +11,11 @@ interface HeaderProps {
 export function Header({ onMenuToggle, isMenuCollapsed }: HeaderProps) {
   const [isOnline, setIsOnline] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
+    
     // 온라인 상태 감지
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -59,11 +62,11 @@ export function Header({ onMenuToggle, isMenuCollapsed }: HeaderProps) {
           {/* 현재 시간 */}
           <div className="hidden md:flex items-center space-x-2 px-3 py-2 bg-slate-700/50 rounded-lg">
             <div className="text-sm font-mono text-slate-300">
-              {currentTime.toLocaleTimeString("ko-KR", {
+              {isMounted ? currentTime.toLocaleTimeString("ko-KR", {
                 hour: "2-digit",
                 minute: "2-digit",
                 second: "2-digit",
-              })}
+              }) : "--:--:--"}
             </div>
           </div>
 

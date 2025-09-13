@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Float, Boolean
+from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin
 
 class InspectionModel(Base, TimestampMixin):
@@ -23,3 +24,9 @@ class InspectionModel(Base, TimestampMixin):
     
     # 활성 여부
     is_active = Column(Boolean, default=True, comment="모델 사용 여부")
+
+    # 관계 설정 - 타이머 설정들
+    timer_settings = relationship("InspectionTimerSettings", back_populates="inspection_model", cascade="all, delete-orphan")
+
+    # 관계 설정 - 테스트 설정들
+    test_settings = relationship("TestSettings", back_populates="inspection_model", cascade="all, delete-orphan")

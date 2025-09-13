@@ -15,7 +15,7 @@ import {
   AlertCircle,
   CheckCircle,
   RefreshCw,
-  Save
+  Save,
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
@@ -37,7 +37,7 @@ export default function SystemSettingsPage() {
     maxRetries: 3,
     logLevel: 'INFO',
     autoBackup: true,
-    backupInterval: 24
+    backupInterval: 24,
   })
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -242,6 +242,7 @@ export default function SystemSettingsPage() {
           </div>
         </CardContent>
       </Card>
+
 
       {/* 로그 및 백업 설정 */}
       <Card>

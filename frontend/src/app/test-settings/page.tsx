@@ -6,444 +6,551 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { 
-  Settings, 
-  Plus, 
-  Edit, 
-  Trash2, 
+import {
+  Settings,
+  Plus,
+  Edit,
+  Trash2,
   CheckCircle,
   AlertCircle,
   RefreshCw,
-  Play,
-  Square,
   Clock,
-  Zap
+  Timer,
+  Save,
+  Activity
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
+// 테스트 설정 인터페이스
 interface TestSettings {
   id: number
   name: string
   description?: string
-  measurement_delay: number  // 측정 간 지연시간 (초)
-  phase_delay: number       // 단계 간 지연시간 (초)
-  retry_count: number       // 실패시 재시도 횟수
-  timeout_duration: number  // 타임아웃 시간 (초)
+  p1_measure_duration: number    // P1 측정 시간 (초)
+  wait_duration_1_to_2: number  // P1-P2 대기 시간 (초)
+  p2_measure_duration: number    // P2 측정 시간 (초)
+  wait_duration_2_to_3: number  // P2-P3 대기 시간 (초)
+  p3_measure_duration: number    // P3 측정 시간 (초)
+  is_active: boolean
+  inspection_model_id?: number   // 검사 모델 ID (null이면 전역 설정)
+  created_at: string
+  updated_at: string
+}
+
+// 검사 모델 인터페이스
+interface InspectionModel {
+  id: number
+  model_name: string
+  description?: string
+  p1_lower_limit: number
+  p1_upper_limit: number
+  p2_lower_limit: number
+  p2_upper_limit: number
+  p3_lower_limit: number
+  p3_upper_limit: number
   is_active: boolean
   created_at: string
+  updated_at: string
+}
+
+// 새 테스트 설정 생성 인터페이스
+interface CreateTestSettings {
+  name: string
+  description?: string
+  p1_measure_duration: number
+  wait_duration_1_to_2: number
+  p2_measure_duration: number
+  wait_duration_2_to_3: number
+  p3_measure_duration: number
+  is_active: boolean
+  inspection_model_id?: number
 }
 
 export default function TestSettingsPage() {
-  const [settings, setSettings] = useState<TestSettings[]>([])
+  const [testSettings, setTestSettings] = useState<TestSettings[]>([])
+  const [inspectionModels, setInspectionModels] = useState<InspectionModel[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingSettings, setEditingSettings] = useState<TestSettings | null>(null)
-  
-  // 폼 상태
-  const [formData, setFormData] = useState({
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
+  const [filterByModel, setFilterByModel] = useState<number | null>(null)
+
+  // 폼 데이터
+  const [formData, setFormData] = useState<CreateTestSettings>({
     name: '',
     description: '',
-    measurement_delay: 1.0,
-    phase_delay: 2.0,
-    retry_count: 3,
-    timeout_duration: 30
+    p1_measure_duration: 5.0,
+    wait_duration_1_to_2: 2.0,
+    p2_measure_duration: 5.0,
+    wait_duration_2_to_3: 2.0,
+    p3_measure_duration: 5.0,
+    is_active: false,
+    inspection_model_id: undefined
   })
 
-  // 데이터 로드
-  useEffect(() => {
-    loadSettings()
-  }, [])
-
-  const loadSettings = async () => {
+  // 검사 모델 목록 조회
+  const fetchInspectionModels = async () => {
     try {
-      setIsLoading(true)
-      const data = await apiClient.getTestSettings()
-      setSettings(data as TestSettings[])
+      const response = await apiClient.getInspectionModelsAll() as InspectionModel[]
+      setInspectionModels(response)
     } catch (err) {
-      setError('테스트 설정 목록을 불러올 수 없습니다')
-      console.error('설정 로드 오류:', err)
+      console.error('검사 모델 조회 실패:', err)
+    }
+  }
+
+  // 테스트 설정 목록 조회
+  const fetchTestSettings = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const response = await apiClient.getTestSettings() as TestSettings[]
+      let settings = response
+
+      // 필터링 적용
+      if (filterByModel === -1) {
+        // 전역 설정만 (inspection_model_id가 null인 것들)
+        settings = settings.filter((s: TestSettings) => !s.inspection_model_id)
+      } else if (filterByModel && filterByModel > 0) {
+        // 특정 모델 설정만
+        settings = settings.filter((s: TestSettings) => s.inspection_model_id === filterByModel)
+      }
+      // filterByModel이 null이면 전체 설정 표시
+
+      setTestSettings(settings)
+    } catch (err) {
+      setError('테스트 설정을 불러오는데 실패했습니다.')
+      console.error('테스트 설정 조회 실패:', err)
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleCreateSettings = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // 테스트 설정 생성
+  const createTestSettings = async () => {
     try {
-      setIsLoading(true)
-      await apiClient.createTestSettings(formData)
+      const response = await apiClient.createTestSettings(formData)
+      await fetchTestSettings()
       setShowAddForm(false)
       resetForm()
-      await loadSettings()
-      setError(null)
     } catch (err) {
-      setError('테스트 설정을 추가할 수 없습니다')
-      console.error('설정 생성 오류:', err)
-    } finally {
-      setIsLoading(false)
+      setError('테스트 설정 생성에 실패했습니다.')
+      console.error('테스트 설정 생성 실패:', err)
     }
   }
 
-  const handleUpdateSettings = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // 테스트 설정 수정
+  const updateTestSettings = async () => {
     if (!editingSettings) return
-
     try {
-      setIsLoading(true)
-      await apiClient.updateTestSettings(editingSettings.id, formData)
+      const response = await apiClient.updateTestSettings(editingSettings.id, formData)
+      await fetchTestSettings()
       setEditingSettings(null)
-      setShowAddForm(false)
       resetForm()
-      await loadSettings()
-      setError(null)
     } catch (err) {
-      setError('테스트 설정을 수정할 수 없습니다')
-      console.error('설정 수정 오류:', err)
-    } finally {
-      setIsLoading(false)
+      setError('테스트 설정 수정에 실패했습니다.')
+      console.error('테스트 설정 수정 실패:', err)
     }
   }
 
-  const handleDeleteSettings = async (settingsId: number) => {
-    if (!confirm('이 테스트 설정을 삭제하시겠습니까?')) return
-
+  // 테스트 설정 삭제
+  const deleteTestSettings = async (id: number) => {
+    if (!confirm('정말로 이 테스트 설정을 삭제하시겠습니까?')) return
     try {
-      setIsLoading(true)
-      // API에 삭제 메서드가 없는 경우를 대비한 임시 처리
-      // await apiClient.deleteTestSettings(settingsId)
-      console.warn('삭제 API가 구현되지 않음:', settingsId)
-      await loadSettings()
-      setError(null)
+      await apiClient.deleteTestSettings(id)
+      await fetchTestSettings()
     } catch (err) {
-      setError('테스트 설정을 삭제할 수 없습니다')
-      console.error('설정 삭제 오류:', err)
-    } finally {
-      setIsLoading(false)
+      setError('테스트 설정 삭제에 실패했습니다.')
+      console.error('테스트 설정 삭제 실패:', err)
     }
   }
 
-  const handleActivateSettings = async (settingsId: number) => {
+  // 테스트 설정 활성화
+  const activateTestSettings = async (id: number) => {
     try {
-      setIsLoading(true)
-      await apiClient.activateTestSettings(settingsId)
-      await loadSettings()
-      setError(null)
+      await apiClient.activateTestSettings(id)
+      await fetchTestSettings()
     } catch (err) {
-      setError('테스트 설정을 활성화할 수 없습니다')
-      console.error('설정 활성화 오류:', err)
-    } finally {
-      setIsLoading(false)
+      setError('테스트 설정 활성화에 실패했습니다.')
+      console.error('테스트 설정 활성화 실패:', err)
     }
   }
 
-  const startEditing = (setting: TestSettings) => {
-    setEditingSettings(setting)
-    setFormData({
-      name: setting.name,
-      description: setting.description || '',
-      measurement_delay: setting.measurement_delay,
-      phase_delay: setting.phase_delay,
-      retry_count: setting.retry_count,
-      timeout_duration: setting.timeout_duration,
-    })
-    setShowAddForm(true)
-  }
-
+  // 폼 리셋
   const resetForm = () => {
     setFormData({
       name: '',
       description: '',
-      measurement_delay: 1.0,
-      phase_delay: 2.0,
-      retry_count: 3,
-      timeout_duration: 30
+      p1_measure_duration: 5.0,
+      wait_duration_1_to_2: 2.0,
+      p2_measure_duration: 5.0,
+      wait_duration_2_to_3: 2.0,
+      p3_measure_duration: 5.0,
+      is_active: false,
+      inspection_model_id: undefined
     })
+    setSelectedModelId(null)
   }
 
-  const cancelEditing = () => {
+  // 수정 모드 시작
+  const startEdit = (settings: TestSettings) => {
+    setEditingSettings(settings)
+    setFormData({
+      name: settings.name,
+      description: settings.description || '',
+      p1_measure_duration: settings.p1_measure_duration,
+      wait_duration_1_to_2: settings.wait_duration_1_to_2,
+      p2_measure_duration: settings.p2_measure_duration,
+      wait_duration_2_to_3: settings.wait_duration_2_to_3,
+      p3_measure_duration: settings.p3_measure_duration,
+      is_active: settings.is_active,
+      inspection_model_id: settings.inspection_model_id
+    })
+    setSelectedModelId(settings.inspection_model_id || null)
+  }
+
+  // 수정 취소
+  const cancelEdit = () => {
     setEditingSettings(null)
-    setShowAddForm(false)
     resetForm()
   }
 
+  // 총 테스트 시간 계산
+  const calculateTotalDuration = (settings: CreateTestSettings) => {
+    return settings.p1_measure_duration +
+           settings.wait_duration_1_to_2 +
+           settings.p2_measure_duration +
+           settings.wait_duration_2_to_3 +
+           settings.p3_measure_duration
+  }
+
+  // 컴포넌트 마운트 시 데이터 로드
+  useEffect(() => {
+    fetchInspectionModels()
+    fetchTestSettings()
+  }, [filterByModel])
+
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">테스트 설정</h1>
-          <p className="text-muted-foreground">
-            검사 시간 및 조건 설정 관리
-          </p>
+          <h1 className="text-3xl font-bold tracking-tight">테스트 설정 관리</h1>
+          <p className="text-muted-foreground">SCPI 명령 실행 관련 기술적 설정을 관리합니다</p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={loadSettings} variant="outline" size="icon">
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-          <Button 
-            onClick={() => setShowAddForm(true)}
-            disabled={showAddForm}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            설정 추가
-          </Button>
-        </div>
+        <Button onClick={() => setShowAddForm(true)} className="flex items-center gap-2">
+          <Plus className="h-4 w-4" />
+          새 테스트 설정 추가
+        </Button>
       </div>
 
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            {error}
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setError(null)}
-              className="ml-2"
-            >
-              닫기
-            </Button>
-          </AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
+      {/* 필터 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">필터</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label>검사 모델별 필터:</Label>
+              <Select
+                value={filterByModel === -1 ? "global" : (filterByModel?.toString() || "all")}
+                onValueChange={(value) => {
+                  if (value === "all") {
+                    setFilterByModel(null)
+                  } else if (value === "global") {
+                    setFilterByModel(-1)
+                  } else {
+                    setFilterByModel(parseInt(value))
+                  }
+                }}
+              >
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">전체 설정</SelectItem>
+                  <SelectItem value="global">전역 설정만</SelectItem>
+                  {inspectionModels.map(model => (
+                    <SelectItem key={model.id} value={model.id.toString()}>
+                      {model.model_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant="outline"
+              onClick={fetchTestSettings}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              새로고침
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* 테스트 설정 추가/수정 폼 */}
-      {showAddForm && (
+      {(showAddForm || editingSettings) && (
         <Card>
           <CardHeader>
             <CardTitle>
               {editingSettings ? '테스트 설정 수정' : '새 테스트 설정 추가'}
             </CardTitle>
-            <CardDescription>
-              검사 프로세스의 시간 및 재시도 조건을 설정하세요
-            </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={editingSettings ? handleUpdateSettings : handleCreateSettings} className="space-y-6">
-              {/* 기본 정보 */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">설정명</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="name">설정 이름</Label>
                   <Input
                     id="name"
                     value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="테스트 설정명을 입력하세요"
-                    required
+                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    placeholder="예: 고정밀 측정 설정"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="description">설명</Label>
+                  <Input
+                    id="description"
+                    value={formData.description}
+                    onChange={(e) => setFormData({...formData, description: e.target.value})}
+                    placeholder="설정에 대한 설명"
+                  />
+                </div>
+                <div>
+                  <Label>검사 모델 연결</Label>
+                  <Select
+                    value={selectedModelId?.toString() || "global"}
+                    onValueChange={(value) => {
+                      if (value === "global") {
+                        setSelectedModelId(null)
+                        setFormData({...formData, inspection_model_id: undefined})
+                      } else {
+                        const modelId = parseInt(value)
+                        setSelectedModelId(modelId)
+                        setFormData({...formData, inspection_model_id: modelId})
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="global">전역 설정</SelectItem>
+                      {inspectionModels.map(model => (
+                        <SelectItem key={model.id} value={model.id.toString()}>
+                          {model.model_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="p1_measure_duration">P1 측정 시간 (초)</Label>
+                  <Input
+                    id="p1_measure_duration"
+                    type="number"
+                    step="0.1"
+                    value={formData.p1_measure_duration}
+                    onChange={(e) => setFormData({...formData, p1_measure_duration: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="wait_duration_1_to_2">P1-P2 대기 시간 (초)</Label>
+                  <Input
+                    id="wait_duration_1_to_2"
+                    type="number"
+                    step="0.1"
+                    value={formData.wait_duration_1_to_2}
+                    onChange={(e) => setFormData({...formData, wait_duration_1_to_2: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="p2_measure_duration">P2 측정 시간 (초)</Label>
+                  <Input
+                    id="p2_measure_duration"
+                    type="number"
+                    step="0.1"
+                    value={formData.p2_measure_duration}
+                    onChange={(e) => setFormData({...formData, p2_measure_duration: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="wait_duration_2_to_3">P2-P3 대기 시간 (초)</Label>
+                  <Input
+                    id="wait_duration_2_to_3"
+                    type="number"
+                    step="0.1"
+                    value={formData.wait_duration_2_to_3}
+                    onChange={(e) => setFormData({...formData, wait_duration_2_to_3: parseFloat(e.target.value)})}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="p3_measure_duration">P3 측정 시간 (초)</Label>
+                  <Input
+                    id="p3_measure_duration"
+                    type="number"
+                    step="0.1"
+                    value={formData.p3_measure_duration}
+                    onChange={(e) => setFormData({...formData, p3_measure_duration: parseFloat(e.target.value)})}
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="description">설명</Label>
-                <Input
-                  id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="테스트 설정에 대한 설명 (선택사항)"
-                />
-              </div>
+            {/* 총 시간 표시 */}
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <Clock className="inline h-4 w-4 mr-1" />
+                총 테스트 시간: <strong>{calculateTotalDuration(formData).toFixed(1)}초</strong>
+              </p>
+            </div>
 
-              {/* 시간 설정 */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">시간 설정</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="measurement_delay">측정 간 지연시간 (초)</Label>
-                    <Input
-                      id="measurement_delay"
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      max="60"
-                      value={formData.measurement_delay}
-                      onChange={(e) => setFormData(prev => ({ ...prev, measurement_delay: parseFloat(e.target.value) }))}
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">각 측정 사이의 대기 시간</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="phase_delay">단계 간 지연시간 (초)</Label>
-                    <Input
-                      id="phase_delay"
-                      type="number"
-                      step="0.1"
-                      min="0.1"
-                      max="300"
-                      value={formData.phase_delay}
-                      onChange={(e) => setFormData(prev => ({ ...prev, phase_delay: parseFloat(e.target.value) }))}
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">P1, P2, P3 단계 사이의 대기 시간</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="retry_count">재시도 횟수</Label>
-                    <Input
-                      id="retry_count"
-                      type="number"
-                      min="0"
-                      max="10"
-                      value={formData.retry_count}
-                      onChange={(e) => setFormData(prev => ({ ...prev, retry_count: parseInt(e.target.value) }))}
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">측정 실패 시 재시도 횟수</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="timeout_duration">타임아웃 시간 (초)</Label>
-                    <Input
-                      id="timeout_duration"
-                      type="number"
-                      min="1"
-                      max="600"
-                      value={formData.timeout_duration}
-                      onChange={(e) => setFormData(prev => ({ ...prev, timeout_duration: parseInt(e.target.value) }))}
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">전체 검사 프로세스의 최대 시간</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button type="submit" disabled={isLoading}>
-                  {editingSettings ? '수정' : '추가'}
-                </Button>
-                <Button type="button" variant="outline" onClick={cancelEditing}>
-                  취소
-                </Button>
-              </div>
-            </form>
+            <div className="flex justify-end gap-2 mt-6">
+              <Button
+                variant="outline"
+                onClick={editingSettings ? cancelEdit : () => setShowAddForm(false)}
+              >
+                취소
+              </Button>
+              <Button onClick={editingSettings ? updateTestSettings : createTestSettings}>
+                <Save className="h-4 w-4 mr-2" />
+                {editingSettings ? '수정' : '생성'}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
       {/* 테스트 설정 목록 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {isLoading && settings.length === 0 ? (
-          <Card className="col-span-full">
-            <CardContent className="flex items-center justify-center py-8">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings className="h-5 w-5" />
+            테스트 설정 목록
+          </CardTitle>
+          <CardDescription>
+            현재 등록된 테스트 설정들입니다. 각 설정은 SCPI 명령 실행 시 사용되는 기술적 파라미터들을 포함합니다.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
               <RefreshCw className="h-6 w-6 animate-spin mr-2" />
               로딩 중...
-            </CardContent>
-          </Card>
-        ) : settings.length > 0 ? (
-          settings.map((setting) => (
-            <Card key={setting.id} className={`relative ${setting.is_active ? 'ring-2 ring-primary' : ''}`}>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <CardTitle className="text-lg">{setting.name}</CardTitle>
-                      {setting.is_active && (
-                        <Badge variant="success">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          활성
-                        </Badge>
+            </div>
+          ) : testSettings.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              테스트 설정이 없습니다.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {testSettings.map((settings) => (
+                <div key={settings.id} className="border rounded-lg p-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="font-semibold">{settings.name}</h3>
+                        {settings.is_active && (
+                          <Badge variant="default" className="bg-green-500">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            활성
+                          </Badge>
+                        )}
+                        {settings.inspection_model_id ? (
+                          <Badge variant="secondary">
+                            모델별: {inspectionModels.find(m => m.id === settings.inspection_model_id)?.model_name}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">
+                            전역 설정
+                          </Badge>
+                        )}
+                      </div>
+                      {settings.description && (
+                        <p className="text-sm text-muted-foreground mb-3">{settings.description}</p>
                       )}
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">P1 측정:</span>
+                          <div className="font-medium">{settings.p1_measure_duration}초</div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">P1-P2 대기:</span>
+                          <div className="font-medium">{settings.wait_duration_1_to_2}초</div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">P2 측정:</span>
+                          <div className="font-medium">{settings.p2_measure_duration}초</div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">P2-P3 대기:</span>
+                          <div className="font-medium">{settings.wait_duration_2_to_3}초</div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">P3 측정:</span>
+                          <div className="font-medium">{settings.p3_measure_duration}초</div>
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm">
+                        <span className="text-muted-foreground">총 시간:</span>
+                        <span className="font-medium ml-1">
+                          {(settings.p1_measure_duration +
+                            settings.wait_duration_1_to_2 +
+                            settings.p2_measure_duration +
+                            settings.wait_duration_2_to_3 +
+                            settings.p3_measure_duration).toFixed(1)}초
+                        </span>
+                      </div>
                     </div>
-                    <CardDescription>{setting.description || '설명 없음'}</CardDescription>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => startEditing(setting)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDeleteSettings(setting.id)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* 설정 값들 */}
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">측정 간 지연</span>
-                    <span className="font-mono">{setting.measurement_delay}초</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">단계 간 지연</span>
-                    <span className="font-mono">{setting.phase_delay}초</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">재시도 횟수</span>
-                    <span className="font-mono">{setting.retry_count}회</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">타임아웃</span>
-                    <span className="font-mono">{setting.timeout_duration}초</span>
+                    <div className="flex items-center gap-2">
+                      {!settings.is_active && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => activateTestSettings(settings.id)}
+                        >
+                          <CheckCircle className="h-4 w-4 mr-1" />
+                          활성화
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => startEdit(settings)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => deleteTestSettings(settings.id)}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
-
-                {/* 예상 시간 계산 */}
-                <div className="bg-muted/50 p-3 rounded">
-                  <div className="text-sm font-medium mb-1">예상 검사 시간</div>
-                  <div className="text-xs text-muted-foreground">
-                    최소: {(setting.measurement_delay * 3 + setting.phase_delay * 2).toFixed(1)}초
-                    {' | '}
-                    최대: {setting.timeout_duration}초
-                  </div>
-                </div>
-
-                <div className="text-xs text-muted-foreground">
-                  생성일: {new Date(setting.created_at).toLocaleDateString('ko-KR')}
-                </div>
-
-                <Button
-                  variant={setting.is_active ? "secondary" : "default"}
-                  size="sm"
-                  onClick={() => handleActivateSettings(setting.id)}
-                  disabled={isLoading || setting.is_active}
-                  className="w-full"
-                >
-                  {setting.is_active ? (
-                    <>
-                      <CheckCircle className="h-3 w-3 mr-1" />
-                      활성 중
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-3 w-3 mr-1" />
-                      활성화
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          ))
-        ) : (
-          <Card className="col-span-full">
-            <CardContent className="flex flex-col items-center justify-center py-8">
-              <Settings className="h-8 w-8 text-muted-foreground mb-2" />
-              <p className="text-muted-foreground">등록된 테스트 설정이 없습니다</p>
-              <Button 
-                onClick={() => setShowAddForm(true)} 
-                className="mt-4"
-                variant="outline"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                첫 번째 설정 추가
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

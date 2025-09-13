@@ -47,6 +47,11 @@ export function useInspection() {
     sendMessage,
   } = useWebSocket(wsUrl);
 
+  // 바코드 데이터 수신 콜백 상태
+  const [onBarcodeReceived, setOnBarcodeReceived] = useState<
+    ((barcode: string) => void) | null
+  >(null);
+
   const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
     console.log("WebSocket 메시지 수신:", message);
 
@@ -59,6 +64,14 @@ export function useInspection() {
         const measurement: MeasurementData = message.data;
         setCurrentMeasurement(measurement);
         setMeasurementHistory((prev) => [...prev, measurement]);
+        break;
+
+      case "barcode_scanned":
+        // 바코드 스캐너에서 데이터 수신
+        const barcodeData = message.data.barcode;
+        if (barcodeData && onBarcodeReceived) {
+          onBarcodeReceived(barcodeData);
+        }
         break;
 
       case "inspection_complete":
@@ -78,7 +91,7 @@ export function useInspection() {
       default:
         console.log("알 수 없는 메시지 유형:", message.type);
     }
-  }, []);
+  }, [onBarcodeReceived]);
 
   // WebSocket 메시지 처리
   useEffect(() => {
@@ -179,6 +192,14 @@ export function useInspection() {
     refreshConnectedDevices();
   }, [refreshStatus, refreshConnectedDevices]);
 
+  // 바코드 콜백 등록
+  const setBarcodeCallback = useCallback(
+    (callback: ((barcode: string) => void) | null) => {
+      setOnBarcodeReceived(() => callback);
+    },
+    []
+  );
+
   return {
     // 상태
     status,
@@ -194,6 +215,7 @@ export function useInspection() {
     stopInspection,
     refreshStatus,
     refreshConnectedDevices,
+    setBarcodeCallback,
 
     // 유틸리티
     clearError: () => setError(null),
