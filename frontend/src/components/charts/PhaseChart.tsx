@@ -146,8 +146,16 @@ export function PhaseChart({
         const min = Math.min(...values);
         const max = Math.max(...values);
 
-        // 합격률 계산
-        const passCount = data.filter((d) => d.result === "PASS").length;
+        // 합격률 계산 - 범위 내에 있는지 확인
+        let passCount = 0;
+        if (limits) {
+          passCount = data.filter((d) => {
+            return d.value >= limits.lower && d.value <= limits.upper;
+          }).length;
+        } else {
+          // 범위가 없으면 모든 데이터를 합격으로 처리
+          passCount = data.length;
+        }
         const passRate = data.length > 0 ? (passCount / data.length) * 100 : 0;
 
         // 트렌드 계산 (최근 5개 데이터점 기준)
@@ -318,9 +326,21 @@ export function PhaseChart({
             </div>
           </div>
           <div className="text-center p-2 bg-white/60 rounded-lg">
-            <div className="text-xs text-muted-foreground mb-1">범위</div>
-            <div className="text-sm font-bold">
-              {statistics.min} - {statistics.max}
+            <div className="text-xs text-muted-foreground mb-1">판정</div>
+            <div
+              className={`text-sm font-bold ${
+                statistics.count === 0
+                  ? "text-gray-500"
+                  : statistics.passRate === 100
+                  ? "text-green-600"
+                  : "text-red-600"
+              }`}
+            >
+              {statistics.count === 0
+                ? "대기"
+                : statistics.passRate === 100
+                ? "합격"
+                : "불합격"}
             </div>
           </div>
           <div className="text-center p-2 bg-white/60 rounded-lg">

@@ -43,6 +43,8 @@ export function useInspection() {
     isConnected: inspectionWsConnected,
     lastMessage: inspectionMessage,
     sendMessage: sendInspectionMessage,
+    connect: connectInspectionWs,
+    disconnect: disconnectInspectionWs,
   } = useWebSocket(inspectionWsUrl);
 
   // 바코드 스캔용 WebSocket
@@ -52,6 +54,8 @@ export function useInspection() {
     isConnected: barcodeWsConnected,
     lastMessage: barcodeMessage,
     sendMessage: sendBarcodeMessage,
+    connect: connectBarcodeWs,
+    disconnect: disconnectBarcodeWs,
   } = useWebSocket(barcodeWsUrl);
 
   // 바코드 데이터 수신 콜백 상태
@@ -259,6 +263,30 @@ export function useInspection() {
     []
   );
 
+  // WebSocket 연결 함수들
+  const connectWebSockets = useCallback(async () => {
+    try {
+      console.log("🔌 WebSocket 연결 시작...");
+
+      // 검사결과용 WebSocket 연결
+      connectInspectionWs();
+
+      // 바코드용 WebSocket 연결
+      connectBarcodeWs();
+
+      console.log("✅ WebSocket 연결 시도 완료");
+    } catch (error) {
+      console.error("❌ WebSocket 연결 실패:", error);
+      setError("WebSocket 연결에 실패했습니다.");
+    }
+  }, [connectInspectionWs, connectBarcodeWs]);
+
+  const disconnectWebSockets = useCallback(() => {
+    console.log("🔌 WebSocket 연결 해제...");
+    disconnectInspectionWs();
+    disconnectBarcodeWs();
+  }, [disconnectInspectionWs, disconnectBarcodeWs]);
+
   return {
     // 상태
     status,
@@ -282,6 +310,10 @@ export function useInspection() {
     // WebSocket 메시지 전송
     sendInspectionMessage,
     sendBarcodeMessage,
+
+    // WebSocket 연결 제어
+    connectWebSockets,
+    disconnectWebSockets,
 
     // 유틸리티
     clearError: () => setError(null),

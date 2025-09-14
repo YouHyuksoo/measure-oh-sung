@@ -406,16 +406,19 @@ export default function SafetyInspectionPage() {
    * 바코드 데이터 수신 시 처리 함수
    * @param barcodeData 수신된 바코드 문자열
    */
-  const handleBarcodeReceived = (barcodeData: string): void => {
-    const trimmedBarcode = barcodeData.trim();
-    setBarcode(trimmedBarcode);
-    setLastScannedBarcode(trimmedBarcode);
+  const handleBarcodeReceived = useCallback(
+    (barcodeData: string): void => {
+      const trimmedBarcode = barcodeData.trim();
+      setBarcode(trimmedBarcode);
+      setLastScannedBarcode(trimmedBarcode);
 
-    // 자동으로 검사 시작
-    if (trimmedBarcode) {
-      handleBarcodeSubmit();
-    }
-  };
+      // 자동으로 검사 시작
+      if (trimmedBarcode) {
+        handleBarcodeSubmit();
+      }
+    },
+    [setBarcode, setLastScannedBarcode, handleBarcodeSubmit]
+  );
 
   // 검사 페이지 초기화
   const initializeSafetyInspectionPage = useCallback(async () => {
@@ -449,7 +452,7 @@ export default function SafetyInspectionPage() {
         stack: error instanceof Error ? error.stack : undefined,
       });
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 페이지 진입 시 초기화
   useEffect(() => {
@@ -457,7 +460,7 @@ export default function SafetyInspectionPage() {
   }, [initializeSafetyInspectionPage]);
 
   // 안전시험기 목록 로드
-  const loadSafetyTesterDevices = async () => {
+  const loadSafetyTesterDevices = useCallback(async () => {
     console.log("🚀 [FRONTEND] loadSafetyTesterDevices 함수 시작");
 
     try {
@@ -516,10 +519,10 @@ export default function SafetyInspectionPage() {
       setDeviceConnectionStatus("error");
       setConnectionError(`안전시험기 목록 조회 실패: ${error}`);
     }
-  };
+  }, [setConnectionError, setConnectedDevices, setDeviceConnectionStatus]);
 
   // 바코드 스캐너 목록 로드
-  const loadBarcodeScannerDevices = async () => {
+  const loadBarcodeScannerDevices = useCallback(async () => {
     console.log("🚀 [FRONTEND] loadBarcodeScannerDevices 함수 시작");
 
     try {
@@ -586,7 +589,7 @@ export default function SafetyInspectionPage() {
       setBarcodeConnectionStatus("error");
       setBarcodeConnectionError(`바코드 스캐너 목록 조회 실패: ${error}`);
     }
-  };
+  }, [setBarcodeConnectionError, setBarcodeConnectionStatus, setBarcodePort]);
 
   // WebSocket 메시지 처리
   useEffect(() => {
@@ -599,7 +602,7 @@ export default function SafetyInspectionPage() {
   }, [lastMessage, handleBarcodeReceived]);
 
   // inspection 페이지와 동일한 모델 로딩 로직
-  const loadInspectionModels = async () => {
+  const loadInspectionModels = useCallback(async () => {
     try {
       setIsLoadingModels(true);
       const response = (await apiClient.getInspectionModelsAll()) as
@@ -620,7 +623,7 @@ export default function SafetyInspectionPage() {
     } finally {
       setIsLoadingModels(false);
     }
-  };
+  }, [setIsLoadingModels, setInspectionModels, setSelectedModelId]);
 
   // 안전시험기 수동 연결
   const connectSafetyTester = async () => {

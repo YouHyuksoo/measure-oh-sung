@@ -131,17 +131,12 @@ export function useWebSocket(url: string): UseWebSocketReturn {
     [socket, isConnected]
   );
 
+  // 자동 연결 비활성화 - 수동으로 connect() 호출해야만 연결됨
   useEffect(() => {
-    // 컴포넌트 마운트 시에만 연결 시도
-    if (!socket && !isConnected) {
-      isManualDisconnectRef.current = false; // 연결 시도 시 수동 해제 플래그 리셋
-      connect();
-    }
-
     return () => {
       disconnect();
     };
-  }, [url, connect, disconnect, isConnected, socket]); // url이 변경될 때만 재연결
+  }, [disconnect]);
 
   return {
     socket,

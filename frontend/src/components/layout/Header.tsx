@@ -1,7 +1,16 @@
-import { Menu, Settings, Activity, Bell, Wifi, WifiOff } from "lucide-react";
+import {
+  Menu,
+  Settings,
+  Activity,
+  Bell,
+  Wifi,
+  WifiOff,
+  Server,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useState, useEffect } from "react";
+import { apiClient } from "@/lib/api";
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -9,26 +18,38 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuToggle, isMenuCollapsed }: HeaderProps) {
-  const [isOnline, setIsOnline] = useState(true);
+  const [isBackendOnline, setIsBackendOnline] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMounted, setIsMounted] = useState(false);
 
+  // 백엔드 서버 상태 확인
+  const checkBackendStatus = async () => {
+    try {
+      await apiClient.healthCheck();
+      setIsBackendOnline(true);
+    } catch (error) {
+      console.log("백엔드 서버 연결 실패:", error);
+      setIsBackendOnline(false);
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
   useEffect(() => {
     setIsMounted(true);
-    
-    // 온라인 상태 감지
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
 
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    // 초기 백엔드 상태 확인
+    checkBackendStatus();
+
+    // 30초마다 백엔드 상태 확인
+    const healthCheckInterval = setInterval(checkBackendStatus, 30000);
 
     // 시간 업데이트
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      clearInterval(healthCheckInterval);
       clearInterval(timer);
     };
   }, []);
@@ -62,29 +83,39 @@ export function Header({ onMenuToggle, isMenuCollapsed }: HeaderProps) {
           {/* 현재 시간 */}
           <div className="hidden md:flex items-center space-x-2 px-3 py-2 bg-slate-700/50 rounded-lg">
             <div className="text-sm font-mono text-slate-300">
-              {isMounted ? currentTime.toLocaleTimeString("ko-KR", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              }) : "--:--:--"}
+              {isMounted
+                ? currentTime.toLocaleTimeString("ko-KR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })
+                : "--:--:--"}
             </div>
           </div>
 
-          {/* 연결 상태 */}
+          {/* 백엔드 서버 상태 */}
           <div className="flex items-center space-x-2 px-3 py-2 bg-slate-700/50 rounded-lg">
-            {isOnline ? (
-              <Wifi className="h-4 w-4 text-green-400" />
+            {isChecking ? (
+              <Activity className="h-4 w-4 text-yellow-400 animate-pulse" />
+            ) : isBackendOnline ? (
+              <Server className="h-4 w-4 text-green-400" />
             ) : (
-              <WifiOff className="h-4 w-4 text-red-400" />
+              <Server className="h-4 w-4 text-red-400" />
             )}
             <Badge
               className={`text-xs border-0 ${
-                isOnline
+                isChecking
+                  ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                  : isBackendOnline
                   ? "bg-green-500/20 text-green-400 border-green-500/30"
                   : "bg-red-500/20 text-red-400 border-red-500/30"
               }`}
             >
-              {isOnline ? "온라인" : "오프라인"}
+              {isChecking
+                ? "확인중"
+                : isBackendOnline
+                ? "서버온라인"
+                : "서버오프라인"}
             </Badge>
           </div>
 

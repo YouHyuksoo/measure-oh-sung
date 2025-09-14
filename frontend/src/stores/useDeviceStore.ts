@@ -10,6 +10,7 @@ export interface DeviceInfo {
   port: string;
   baud_rate: number;
   connected: boolean;
+  connection_status?: string;
 }
 
 export interface DeviceState {

@@ -49,7 +49,18 @@ def connect_device(
     print(f"   - 보드레이트: {device.baud_rate}")
     print(f"   - 현재 상태: {device.connection_status}")
     
-    # 2. 시리얼 서비스 연결 시도
+    # 2. 이미 연결된 경우 확인
+    from app.models.device import ConnectionStatus
+    if device.connection_status == ConnectionStatus.CONNECTED:
+        print(f"✅ [BACKEND] 디바이스가 이미 연결되어 있습니다.")
+        # 실제 연결 상태 확인
+        if serial_service.is_connected(device.id):
+            print(f"✅ [BACKEND] 실제 연결 상태 확인됨")
+            return {"success": True, "message": f"Device {device.name} is already connected"}
+        else:
+            print(f"⚠️ [BACKEND] DB 상태와 실제 연결 상태 불일치 - 재연결 시도")
+    
+    # 3. 시리얼 서비스 연결 시도
     print(f"🔌 [BACKEND] 시리얼 서비스 연결 시도 중...")
     success = serial_service.connect_device(device)
     print(f"📡 [BACKEND] 시리얼 서비스 연결 결과: {success}")

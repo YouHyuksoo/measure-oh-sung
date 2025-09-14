@@ -39,7 +39,11 @@ class SerialCommunicationService:
                 # 이미 연결되어 있는 경우 연결 해제 후 재연결
                 if device.id in self.connections:
                     print(f"⚠️ [SERIAL_SERVICE] 이미 연결된 디바이스 발견 - 기존 연결 해제 중...")
-                    self.disconnect_device(device.id)
+                    # 락 내에서 직접 해제 처리 (재귀 락 방지)
+                    existing_connection = self.connections[device.id]
+                    if existing_connection.is_open:
+                        existing_connection.close()
+                    del self.connections[device.id]
                     print(f"✅ [SERIAL_SERVICE] 기존 연결 해제 완료")
                 
                 # 시리얼 연결 생성
