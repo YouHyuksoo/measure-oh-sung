@@ -116,11 +116,62 @@ async def broadcast_inspection_update(data: dict):
     })
     await manager.broadcast(message)
 
+@router.websocket("/ws/barcode")
+async def barcode_websocket(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        # Send initial barcode status
+        await websocket.send_text(json.dumps({
+            "type": "barcode_status",
+            "data": {
+                "is_listening": False,
+                "connected_port": None,
+                "last_barcode": None
+            },
+            "timestamp": datetime.now().isoformat()
+        }))
+        
+        while True:
+            try:
+                # Wait for messages or send periodic heartbeat
+                try:
+                    # Try to receive a message with timeout
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+                    # Process received message if any
+                    print(f"Received barcode message: {data}")
+                except asyncio.TimeoutError:
+                    # Send periodic heartbeat
+                    await websocket.send_text(json.dumps({
+                        "type": "heartbeat",
+                        "data": {"status": "alive"},
+                        "timestamp": datetime.now().isoformat()
+                    }))
+                    
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"Barcode WebSocket error: {e}")
+                break
+            
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(websocket)
+
 # Function to broadcast measurement data
 async def broadcast_measurement_data(measurement: dict):
     message = json.dumps({
         "type": "measurement_data",
         "data": measurement,
+        "timestamp": datetime.now().isoformat()
+    })
+    await manager.broadcast(message)
+
+# Function to broadcast barcode data
+async def broadcast_barcode_data(barcode: str):
+    message = json.dumps({
+        "type": "barcode_scanned",
+        "data": {"barcode": barcode},
         "timestamp": datetime.now().isoformat()
     })
     await manager.broadcast(message)

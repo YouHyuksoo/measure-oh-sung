@@ -5,10 +5,20 @@ import serial
 import serial.tools.list_ports
 from pydantic import BaseModel
 from datetime import datetime
+import threading
+import asyncio
 
 from app import crud, schemas
 from app.db.database import get_db
+from app.models import Device
 from app.models.device import DeviceType, ConnectionStatus, CommandCategory
+from app.schemas.barcode_scanner import (
+    BarcodeScannerSettingsCreate, 
+    BarcodeScannerSettingsUpdate, 
+    BarcodeScannerSettingsResponse,
+    BarcodeScannerStatus,
+    BarcodeTestResult
+)
 import time
 
 router = APIRouter()
@@ -29,6 +39,7 @@ class InterfaceConfig(BaseModel):
 class InterfaceRequest(BaseModel):
     type: str
     baud: int = 115200
+    port: Optional[str] = None
     
 class TestIdnResponse(BaseModel):
     ok: bool
@@ -135,8 +146,8 @@ def get_connected_devices(
     devices = crud.device.get_connected_devices(db=db)
     return devices
 
-# GPT-9000 시리즈 통신 관리 API
-@router.get("/gpt9000/ports", response_model=List[SerialPortInfo])
+# 안전시험기 통신 관리 API
+@router.get("/safety-tester/ports", response_model=List[SerialPortInfo])
 def get_available_ports() -> Any:
     """사용 가능한 시리얼 포트 목록을 조회합니다."""
     try:
@@ -150,7 +161,7 @@ def get_available_ports() -> Any:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"포트 조회 실패: {str(e)}")
 
-@router.post("/gpt9000/connect")
+@router.post("/safety-tester/connect")
 def connect_to_port(connection: ConnectionRequest) -> Any:
     """지정된 포트로 연결합니다."""
     try:
@@ -178,33 +189,79 @@ def connect_to_port(connection: ConnectionRequest) -> Any:
     except Exception as e:
         return {"ok": False, "code": "UNKNOWN_ERROR", "message": f"연결 오류: {str(e)}"}
 
-@router.post("/gpt9000/disconnect")
+@router.post("/safety-tester/disconnect")
 def disconnect_from_port() -> Any:
     """포트 연결을 해제합니다."""
     return {"ok": True, "message": "연결 해제됨"}
 
-@router.get("/gpt9000/interface", response_model=InterfaceConfig)
-def get_interface_config() -> Any:
+@router.get("/safety-tester/interface")
+def get_interface_config(db: Session = Depends(get_db)) -> Any:
     """현재 인터페이스 설정을 조회합니다."""
-    # 실제 구현에서는 설정을 저장/조회하는 로직이 필요
-    return InterfaceConfig(type="RS232", baud=115200)
+    # 안전시험기 장비 설정 조회
+    safety_device = db.query(Device).filter(
+        Device.device_type == "SAFETY_TESTER",
+        Device.is_active == True
+    ).first()
 
-@router.post("/gpt9000/interface")
-def set_interface_config(config: InterfaceRequest) -> Any:
+    if safety_device:
+        interface_type = "RS232"  # 기본값
+        if safety_device.port and safety_device.port.startswith("COM"):
+            interface_type = "USB" if "USB" in (safety_device.manufacturer or "") else "RS232"
+
+        return {
+            "type": interface_type,
+            "baud": safety_device.baud_rate or 115200,
+            "port": safety_device.port
+        }
+    else:
+        # 기본값 반환
+        return InterfaceConfig(type="RS232", baud=115200)
+
+@router.post("/safety-tester/interface")
+def set_interface_config(config: InterfaceRequest, db: Session = Depends(get_db)) -> Any:
     """인터페이스 설정을 변경합니다."""
     valid_bauds = [9600, 19200, 38400, 57600, 115200]
     valid_types = ["USB", "RS232", "GPIB"]
-    
+
     if config.type not in valid_types:
         return {"ok": False, "code": "INVALID_PARAM", "message": "유효하지 않은 인터페이스 타입"}
-    
+
     if config.baud not in valid_bauds:
         return {"ok": False, "code": "INVALID_PARAM", "message": "유효하지 않은 보드레이트"}
-    
-    # 실제 구현에서는 설정을 저장하는 로직이 필요
-    return {"ok": True, "message": f"인터페이스 설정 완료: {config.type}, {config.baud}"}
 
-@router.post("/gpt9000/test-idn", response_model=TestIdnResponse)
+    try:
+        # 기존 안전시험기 장비 찾기 또는 생성
+        safety_device = db.query(Device).filter(
+            Device.device_type == "SAFETY_TESTER",
+            Device.is_active == True
+        ).first()
+
+        if not safety_device:
+            # 새로운 안전시험기 장비 생성
+            safety_device = Device(
+                name="GPT-9000 3대안전설비",
+                device_type="SAFETY_TESTER",
+                manufacturer="GPT",
+                model="GPT-9000",
+                port=config.port or "COM1",  # 전달받은 포트 또는 기본값
+                baud_rate=config.baud,
+                is_active=True
+            )
+            db.add(safety_device)
+        else:
+            # 기존 장비 설정 업데이트
+            safety_device.baud_rate = config.baud
+            if config.port:
+                safety_device.port = config.port
+
+        db.commit()
+        return {"ok": True, "message": f"인터페이스 설정 저장됨: {config.type}, {config.baud}"}
+
+    except Exception as e:
+        db.rollback()
+        return {"ok": False, "code": "DATABASE_ERROR", "message": f"설정 저장 실패: {str(e)}"}
+
+@router.post("/safety-tester/test-idn", response_model=TestIdnResponse)
 def test_device_idn(connection: ConnectionRequest) -> Any:
     """*IDN? 명령으로 장비 연결을 테스트합니다."""
     try:
@@ -279,6 +336,76 @@ _barcode_state = {
 # 실제 시리얼 포트 연결 객체 저장
 _barcode_serial_connection = None
 
+# 바코드 스캐너 설정 관리 API
+@router.get("/barcode/settings", response_model=List[BarcodeScannerSettingsResponse])
+def get_barcode_scanner_settings(
+    skip: int = 0, 
+    limit: int = 100, 
+    db: Session = Depends(get_db)
+):
+    """모든 바코드 스캐너 설정 조회"""
+    from app.crud.barcode_scanner import get_barcode_scanner_settings
+    settings = get_barcode_scanner_settings(db, skip=skip, limit=limit)
+    return settings
+
+
+@router.get("/barcode/settings/active", response_model=Optional[BarcodeScannerSettingsResponse])
+def get_active_barcode_scanner_settings(db: Session = Depends(get_db)):
+    """활성화된 바코드 스캐너 설정 조회"""
+    from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+    settings = get_active_barcode_scanner_settings(db)
+    return settings
+
+
+@router.post("/barcode/settings", response_model=BarcodeScannerSettingsResponse)
+def create_barcode_scanner_settings_endpoint(
+    settings: BarcodeScannerSettingsCreate,
+    db: Session = Depends(get_db)
+):
+    """새로운 바코드 스캐너 설정 생성"""
+    from app.crud.barcode_scanner import create_barcode_scanner_settings
+    return create_barcode_scanner_settings(db, settings)
+
+
+@router.put("/barcode/settings/{settings_id}", response_model=BarcodeScannerSettingsResponse)
+def update_barcode_scanner_settings_endpoint(
+    settings_id: int,
+    settings: BarcodeScannerSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """바코드 스캐너 설정 업데이트"""
+    from app.crud.barcode_scanner import update_barcode_scanner_settings
+    db_settings = update_barcode_scanner_settings(db, settings_id, settings)
+    if not db_settings:
+        raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
+    return db_settings
+
+
+@router.delete("/barcode/settings/{settings_id}")
+def delete_barcode_scanner_settings_endpoint(
+    settings_id: int,
+    db: Session = Depends(get_db)
+):
+    """바코드 스캐너 설정 삭제"""
+    from app.crud.barcode_scanner import delete_barcode_scanner_settings
+    success = delete_barcode_scanner_settings(db, settings_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
+    return {"message": "바코드 스캐너 설정이 삭제되었습니다"}
+
+
+@router.post("/barcode/settings/{settings_id}/activate", response_model=BarcodeScannerSettingsResponse)
+def activate_barcode_scanner_settings_endpoint(
+    settings_id: int,
+    db: Session = Depends(get_db)
+):
+    """바코드 스캐너 설정 활성화"""
+    from app.crud.barcode_scanner import activate_barcode_scanner_settings
+    db_settings = activate_barcode_scanner_settings(db, settings_id)
+    if not db_settings:
+        raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
+    return db_settings
+
 # 바코드 스캐너 관련 엔드포인트들
 @router.get("/barcode/ports")
 async def get_barcode_ports():
@@ -315,46 +442,54 @@ async def get_barcode_ports():
 
 @router.post("/barcode/connect")
 async def connect_barcode_scanner(
-    port: str = Body(..., embed=True),
-    baudrate: int = Body(9600, embed=True),
-    data_bits: int = Body(8, embed=True),
-    stop_bits: int = Body(1, embed=True),
-    parity: str = Body("N", embed=True),
-    timeout: int = Body(1, embed=True)
+    settings: BarcodeScannerSettingsCreate,
+    db: Session = Depends(get_db)
 ):
-    """바코드 스캐너 연결"""
+    """바코드 스캐너 연결 및 설정 저장"""
+    connection = None
     try:
-        # 시리얼 연결 설정
+        # 시리얼 연결 테스트
         connection = serial.Serial(
-            port=port,
-            baudrate=baudrate,
-            bytesize=data_bits,
-            stopbits=stop_bits,
-            parity=parity,
-            timeout=timeout
+            port=settings.port,
+            baudrate=settings.baudrate,
+            bytesize=settings.data_bits,
+            stopbits=settings.stop_bits,
+            parity=settings.parity,
+            timeout=settings.timeout
         )
         
         if connection.is_open:
-            connection.close()
-            # 바코드 상태 업데이트
-            _barcode_state["connected_port"] = port
-            return {
-                "success": True,
-                "message": f"바코드 스캐너 포트 {port} 연결 성공",
-                "port": port,
-                "settings": {
-                    "baudrate": baudrate,
-                    "data_bits": data_bits,
-                    "stop_bits": stop_bits,
-                    "parity": parity,
-                    "timeout": timeout
+            # 연결 테스트 성공 - 설정을 데이터베이스에 저장
+            try:
+                from app.crud.barcode_scanner import create_barcode_scanner_settings
+                db_settings = create_barcode_scanner_settings(db, settings)
+                
+                # 바코드 상태 업데이트
+                _barcode_state["connected_port"] = settings.port
+                
+                return {
+                    "success": True,
+                    "message": f"바코드 스캐너 포트 {settings.port} 연결 성공 및 설정 저장됨",
+                    "settings_id": db_settings.id,
+                    "port": settings.port,
+                    "settings": {
+                        "baudrate": settings.baudrate,
+                        "data_bits": settings.data_bits,
+                        "stop_bits": settings.stop_bits,
+                        "parity": settings.parity,
+                        "timeout": settings.timeout
+                    }
                 }
-            }
+            except Exception as db_error:
+                import traceback
+                error_detail = f"데이터베이스 저장 실패: {str(db_error)}\n{traceback.format_exc()}"
+                print(f"바코드 스캐너 DB 저장 에러: {error_detail}")
+                raise HTTPException(status_code=500, detail=f"데이터베이스 저장 실패: {str(db_error)}")
         else:
             raise HTTPException(status_code=400, detail="포트 연결 실패")
             
     except serial.SerialException as e:
-        error_msg = f"포트 {port} 연결 실패"
+        error_msg = f"포트 {settings.port} 연결 실패"
         if "could not open port" in str(e).lower():
             error_msg += " - 포트가 존재하지 않거나 이미 사용 중입니다"
         elif "access is denied" in str(e).lower():
@@ -364,7 +499,15 @@ async def connect_barcode_scanner(
         raise HTTPException(status_code=400, detail=error_msg)
     
     except Exception as e:
+        import traceback
+        error_detail = f"연결 실패: {str(e)}\n{traceback.format_exc()}"
+        print(f"바코드 스캐너 연결 에러: {error_detail}")
         raise HTTPException(status_code=500, detail=f"연결 실패: {str(e)}")
+    
+    finally:
+        # 연결 테스트 후 포트 닫기
+        if connection and connection.is_open:
+            connection.close()
 
 
 @router.post("/barcode/test-read")
@@ -435,64 +578,131 @@ async def test_barcode_read(
 
 
 @router.post("/barcode/start-listening")
-async def start_barcode_listening(
-    port: str = Body(..., embed=True),
-    baudrate: int = Body(9600, embed=True),
-    data_bits: int = Body(8, embed=True),
-    stop_bits: int = Body(1, embed=True),
-    parity: str = Body("N", embed=True),
-    timeout: int = Body(1, embed=True)
-):
-    """바코드 스캐너 실시간 감청 시작"""
+async def start_barcode_listening(db: Session = Depends(get_db)):
+    """바코드 스캐너 실시간 감청 시작 (저장된 설정 사용)"""
     global _barcode_serial_connection
-    
+    print(f"🚀 [BACKEND] start_barcode_listening API 호출됨")
+
     try:
+        # 데이터베이스에서 활성 설정 조회
+        print(f"🔍 [BACKEND] 활성화된 바코드 스캐너 설정 조회 중...")
+        from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+        active_settings = get_active_barcode_scanner_settings(db)
+        if not active_settings:
+            print(f"❌ [BACKEND] 활성화된 바코드 스캐너 설정이 없음")
+            raise HTTPException(status_code=404, detail="활성화된 바코드 스캐너 설정이 없습니다. 먼저 장비 관리에서 바코드 스캐너를 설정해주세요.")
+        
+        print(f"✅ [BACKEND] 바코드 스캐너 설정 조회 성공:")
+        print(f"   - ID: {active_settings.id}")
+        print(f"   - 포트: {active_settings.port}")
+        print(f"   - 보드레이트: {active_settings.baudrate}")
+        print(f"   - 데이터 비트: {active_settings.data_bits}")
+        print(f"   - 패리티: {active_settings.parity}")
+        print(f"   - 스톱 비트: {active_settings.stop_bits}")
+        print(f"   - 타임아웃: {active_settings.timeout}")
+        
         # 기존 연결이 있으면 먼저 해제
+        print(f"🔍 [BACKEND] 기존 연결 확인 중...")
         if _barcode_serial_connection and _barcode_serial_connection.is_open:
+            print(f"⚠️ [BACKEND] 기존 연결 발견 - 해제 중...")
             _barcode_serial_connection.close()
             _barcode_serial_connection = None
+            print(f"✅ [BACKEND] 기존 연결 해제 완료")
+        else:
+            print(f"ℹ️ [BACKEND] 기존 연결 없음")
         
         # 실제 시리얼 포트 연결 시도
+        print(f"🔌 [BACKEND] 시리얼 포트 연결 시도 중...")
+        print(f"📡 [BACKEND] 연결 파라미터:")
+        print(f"   - 포트: {active_settings.port}")
+        print(f"   - 보드레이트: {active_settings.baudrate}")
+        print(f"   - 데이터 비트: {active_settings.data_bits}")
+        print(f"   - 패리티: {active_settings.parity}")
+        print(f"   - 스톱 비트: {active_settings.stop_bits}")
+        print(f"   - 타임아웃: {active_settings.timeout}")
+        
         try:
             _barcode_serial_connection = serial.Serial(
-                port=port,
-                baudrate=baudrate,
-                bytesize=data_bits,
-                parity=parity,
-                stopbits=stop_bits,
-                timeout=timeout
+                port=active_settings.port,
+                baudrate=active_settings.baudrate,
+                bytesize=active_settings.data_bits,
+                parity=active_settings.parity,
+                stopbits=active_settings.stop_bits,
+                timeout=active_settings.timeout
             )
             
+            print(f"✅ [BACKEND] 시리얼 객체 생성 완료")
+            
             # 연결 테스트
+            print(f"🔍 [BACKEND] 연결 상태 확인 중...")
+            print(f"📊 [BACKEND] connection.is_open: {_barcode_serial_connection.is_open}")
+            
             if _barcode_serial_connection.is_open:
-                # 바코드 상태 업데이트
-                _barcode_state["is_listening"] = True
-                _barcode_state["connected_port"] = port
+                print(f"✅ [BACKEND] 시리얼 포트 열기 성공!")
                 
-                return {
+                # 바코드 상태 업데이트
+                print(f"💾 [BACKEND] 바코드 상태 업데이트 중...")
+                _barcode_state["is_listening"] = True
+                _barcode_state["connected_port"] = active_settings.port
+                print(f"✅ [BACKEND] 바코드 상태 업데이트 완료:")
+                print(f"   - is_listening: {_barcode_state['is_listening']}")
+                print(f"   - connected_port: {_barcode_state['connected_port']}")
+                
+                # 바코드 수신 태스크 시작
+                print(f"🔄 [BACKEND] 바코드 수신 태스크 시작 중...")
+                await start_barcode_task()
+                print(f"✅ [BACKEND] 바코드 수신 태스크 시작 완료")
+                
+                response = {
                     "success": True,
-                    "message": f"바코드 스캐너 실시간 감청 시작: {port}",
+                    "message": f"바코드 스캐너 실시간 감청 시작: {active_settings.port}",
                     "settings": {
-                        "port": port,
-                        "baudrate": baudrate,
-                        "data_bits": data_bits,
-                        "stop_bits": stop_bits,
-                        "parity": parity,
-                        "timeout": timeout
+                        "port": active_settings.port,
+                        "baudrate": active_settings.baudrate,
+                        "data_bits": active_settings.data_bits,
+                        "stop_bits": active_settings.stop_bits,
+                        "parity": active_settings.parity,
+                        "timeout": active_settings.timeout
                     }
                 }
+                print(f"📤 [BACKEND] 성공 응답 전송: {response}")
+                return response
             else:
+                print(f"❌ [BACKEND] 시리얼 포트 열기 실패!")
                 raise Exception("시리얼 포트 연결 실패")
                 
         except serial.SerialException as e:
+            print(f"❌ [BACKEND] 시리얼 포트 연결 예외 발생!")
+            print(f"📋 [BACKEND] SerialException 상세:")
+            print(f"   - 에러 타입: {type(e).__name__}")
+            print(f"   - 에러 메시지: {str(e)}")
+            print(f"   - 에러 코드: {getattr(e, 'errno', 'N/A')}")
+            
             # 시리얼 포트 연결 실패
             _barcode_state["is_listening"] = False
             _barcode_state["connected_port"] = ""
-            raise Exception(f"시리얼 포트 {port} 연결 실패: {str(e)}")
+            print(f"💾 [BACKEND] 바코드 상태 에러로 업데이트:")
+            print(f"   - is_listening: {_barcode_state['is_listening']}")
+            print(f"   - connected_port: {_barcode_state['connected_port']}")
+            
+            raise Exception(f"시리얼 포트 {active_settings.port} 연결 실패: {str(e)}")
             
     except Exception as e:
+        print(f"❌ [BACKEND] 바코드 스캐너 감청 시작 실패!")
+        print(f"📋 [BACKEND] Exception 상세:")
+        print(f"   - 에러 타입: {type(e).__name__}")
+        print(f"   - 에러 메시지: {str(e)}")
+        
+        import traceback
+        error_detail = f"바코드 스캐너 감청 시작 실패: {str(e)}\n{traceback.format_exc()}"
+        print(f"📋 [BACKEND] 스택 트레이스: {error_detail}")
+        
         _barcode_state["is_listening"] = False
         _barcode_state["connected_port"] = ""
+        print(f"💾 [BACKEND] 바코드 상태 에러로 업데이트:")
+        print(f"   - is_listening: {_barcode_state['is_listening']}")
+        print(f"   - connected_port: {_barcode_state['connected_port']}")
+        
         raise HTTPException(status_code=500, detail=f"바코드 감청 시작 실패: {str(e)}")
 
 
@@ -502,6 +712,9 @@ async def stop_barcode_listening():
     global _barcode_serial_connection
     
     try:
+        # 바코드 수신 태스크 중지
+        stop_barcode_task()
+        
         # 실제 시리얼 포트 연결 해제
         if _barcode_serial_connection and _barcode_serial_connection.is_open:
             _barcode_serial_connection.close()
@@ -519,12 +732,16 @@ async def stop_barcode_listening():
         raise HTTPException(status_code=500, detail=f"바코드 감청 중지 실패: {str(e)}")
 
 
-@router.get("/barcode/status")
-async def get_barcode_status():
+@router.get("/barcode/status", response_model=BarcodeScannerStatus)
+async def get_barcode_status(db: Session = Depends(get_db)):
     """바코드 스캐너 상태 조회"""
     global _barcode_serial_connection
-    
+
     try:
+        # 데이터베이스에서 활성 설정 조회
+        from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+        active_settings = get_active_barcode_scanner_settings(db)
+        
         # 실제 시리얼 포트 연결 상태 확인
         actual_is_connected = False
         actual_port = ""
@@ -546,23 +763,30 @@ async def get_barcode_status():
             _barcode_state["is_listening"] = False
             _barcode_state["connected_port"] = ""
         
-        # 실제 상태 반환
-        return {
-            "is_listening": actual_is_connected,
-            "connected_port": actual_port,
-            "last_barcode": _barcode_state["last_barcode"],
-            "scan_count": _barcode_state["scan_count"]
-        }
+        # 실제 상태 반환 (연결되지 않았더라도 설정된 포트 정보는 표시)
+        configured_port = active_settings.port if active_settings else None
+        display_port = actual_port if actual_is_connected else configured_port
+
+        return BarcodeScannerStatus(
+            is_connected=actual_is_connected,
+            is_listening=_barcode_state["is_listening"],
+            connected_port=display_port,
+            last_barcode=_barcode_state["last_barcode"] if _barcode_state["last_barcode"] else None,
+            scan_count=_barcode_state["scan_count"],
+            settings=active_settings
+        )
     except Exception as e:
         # 오류 발생 시 상태 초기화
         _barcode_state["is_listening"] = False
         _barcode_state["connected_port"] = ""
-        return {
-            "is_listening": False,
-            "connected_port": "",
-            "last_barcode": "",
-            "scan_count": 0
-        }
+        return BarcodeScannerStatus(
+            is_connected=False,
+            is_listening=False,
+            connected_port=None,
+            last_barcode=None,
+            scan_count=0,
+            settings=None
+        )
 
 
 # 전력 측정 설비 관리 API
@@ -613,14 +837,31 @@ def disconnect_power_meter() -> Any:
     """전력 측정 설비 연결을 해제합니다."""
     return {"ok": True, "message": "전력 측정 설비 연결 해제됨"}
 
-@router.get("/power-meter/interface", response_model=InterfaceConfig)
-def get_power_meter_interface() -> Any:
+@router.get("/power-meter/interface")
+def get_power_meter_interface(db: Session = Depends(get_db)) -> Any:
     """전력 측정 설비 인터페이스 설정을 조회합니다."""
-    # 실제 구현에서는 설정을 저장/조회하는 로직이 필요
-    return InterfaceConfig(type="RS232", baud=9600)
+    # 전력측정설비 설정 조회
+    power_device = db.query(Device).filter(
+        Device.device_type == "POWER_METER",
+        Device.is_active == True
+    ).first()
+
+    if power_device:
+        interface_type = "RS232"  # 기본값
+        if power_device.port and power_device.port.startswith("COM"):
+            interface_type = "USB" if "USB" in (power_device.manufacturer or "") else "RS232"
+
+        return {
+            "type": interface_type,
+            "baud": power_device.baud_rate or 9600,
+            "port": power_device.port
+        }
+    else:
+        # 기본값 반환
+        return InterfaceConfig(type="RS232", baud=9600)
 
 @router.post("/power-meter/interface")
-def set_power_meter_interface(config: InterfaceRequest) -> Any:
+def set_power_meter_interface(config: InterfaceRequest, db: Session = Depends(get_db)) -> Any:
     """전력 측정 설비 인터페이스 설정을 변경합니다."""
     valid_bauds = [9600, 19200, 38400, 57600, 115200]
     valid_types = ["USB", "RS232", "GPIB"]
@@ -631,8 +872,37 @@ def set_power_meter_interface(config: InterfaceRequest) -> Any:
     if config.baud not in valid_bauds:
         return {"ok": False, "code": "INVALID_PARAM", "message": "유효하지 않은 보드레이트"}
 
-    # 실제 구현에서는 설정을 저장하는 로직이 필요
-    return {"ok": True, "message": f"전력 측정 설비 인터페이스 설정 완료: {config.type}, {config.baud}"}
+    try:
+        # 기존 전력측정설비 찾기 또는 생성
+        power_device = db.query(Device).filter(
+            Device.device_type == "POWER_METER",
+            Device.is_active == True
+        ).first()
+
+        if not power_device:
+            # 새로운 전력측정설비 생성
+            power_device = Device(
+                name="전력측정설비",
+                device_type="POWER_METER",
+                manufacturer="Generic",
+                model="Power Meter",
+                port=config.port or "COM1",  # 전달받은 포트 또는 기본값
+                baud_rate=config.baud,
+                is_active=True
+            )
+            db.add(power_device)
+        else:
+            # 기존 장비 설정 업데이트
+            power_device.baud_rate = config.baud
+            if config.port:
+                power_device.port = config.port
+
+        db.commit()
+        return {"ok": True, "message": f"전력측정설비 인터페이스 설정 저장됨: {config.type}, {config.baud}"}
+
+    except Exception as e:
+        db.rollback()
+        return {"ok": False, "code": "DATABASE_ERROR", "message": f"설정 저장 실패: {str(e)}"}
 
 @router.post("/power-meter/test-idn", response_model=TestIdnResponse)
 def test_power_meter_idn(connection: ConnectionRequest) -> Any:
@@ -1631,3 +1901,69 @@ def create_default_commands(
         "message": f"Created {len(created_commands)} default commands for {device_type}",
         "commands": created_commands
     }
+
+
+# 실시간 바코드 데이터 수신을 위한 비동기 태스크
+async def barcode_listening_task():
+    """바코드 스캐너에서 실시간 데이터를 수신하는 비동기 태스크"""
+    global _barcode_serial_connection, _barcode_state
+    
+    while True:
+        try:
+            if _barcode_serial_connection and _barcode_serial_connection.is_open:
+                # 바코드 데이터 읽기 시도
+                if _barcode_serial_connection.in_waiting > 0:
+                    data = _barcode_serial_connection.readline()
+                    if data:
+                        try:
+                            # 바코드 데이터 디코딩
+                            barcode_data = data.decode('utf-8').strip()
+                            if barcode_data:
+                                # 상태 업데이트
+                                _barcode_state["last_barcode"] = barcode_data
+                                _barcode_state["scan_count"] += 1
+                                
+                                print(f"바코드 수신: {barcode_data}")
+                                
+                                # WebSocket을 통해 프론트엔드에 실시간 전송
+                                from app.api.v1.endpoints.websocket import broadcast_barcode_data
+                                await broadcast_barcode_data(barcode_data)
+                                
+                        except UnicodeDecodeError:
+                            # 바이너리 데이터인 경우
+                            print(f"바이너리 바코드 데이터 수신: {data.hex()}")
+                            _barcode_state["last_barcode"] = f"Binary: {data.hex()}"
+                            _barcode_state["scan_count"] += 1
+                            
+                            # 바이너리 데이터도 WebSocket으로 전송
+                            from app.api.v1.endpoints.websocket import broadcast_barcode_data
+                            await broadcast_barcode_data(f"Binary: {data.hex()}")
+            else:
+                # 연결이 끊어진 경우 태스크 종료
+                break
+                
+        except Exception as e:
+            print(f"바코드 수신 오류: {e}")
+            break
+        
+        # 짧은 대기 시간
+        await asyncio.sleep(0.1)
+
+
+# 바코드 수신 태스크 관리
+_barcode_task = None
+
+async def start_barcode_task():
+    """바코드 수신 태스크 시작"""
+    global _barcode_task
+    if _barcode_task is None or _barcode_task.done():
+        _barcode_task = asyncio.create_task(barcode_listening_task())
+        print("바코드 수신 태스크 시작됨")
+
+def stop_barcode_task():
+    """바코드 수신 태스크 중지"""
+    global _barcode_task
+    if _barcode_task and not _barcode_task.done():
+        _barcode_task.cancel()
+        _barcode_task = None
+        print("바코드 수신 태스크 중지됨")

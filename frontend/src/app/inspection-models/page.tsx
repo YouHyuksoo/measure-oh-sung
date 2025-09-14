@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Dialog,
@@ -50,9 +49,6 @@ interface InspectionModel {
   p2_upper_limit: number;
   p3_lower_limit: number;
   p3_upper_limit: number;
-  p1_enabled: boolean;
-  p2_enabled: boolean;
-  p3_enabled: boolean;
   is_active: boolean;
   created_at: string;
 }
@@ -62,7 +58,9 @@ export default function InspectionModelsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingModel, setEditingModel] = useState<InspectionModel | null>(null);
+  const [editingModel, setEditingModel] = useState<InspectionModel | null>(
+    null
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 폼 상태
@@ -72,13 +70,10 @@ export default function InspectionModelsPage() {
     barcode_pattern: "",
     p1_min_value: 0,
     p1_max_value: 100,
-    p1_enabled: true,
     p2_min_value: 0,
     p2_max_value: 100,
-    p2_enabled: true,
     p3_min_value: 0,
     p3_max_value: 100,
-    p3_enabled: false,
   });
 
   // 데이터 로드
@@ -102,7 +97,7 @@ export default function InspectionModelsPage() {
   const handleCreateModel = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    
+
     try {
       // 백엔드 스키마에 맞게 데이터 변환
       const backendData = {
@@ -110,15 +105,12 @@ export default function InspectionModelsPage() {
         description: formData.description,
         p1_lower_limit: formData.p1_min_value,
         p1_upper_limit: formData.p1_max_value,
-        p1_enabled: formData.p1_enabled,
         p2_lower_limit: formData.p2_min_value,
         p2_upper_limit: formData.p2_max_value,
-        p2_enabled: formData.p2_enabled,
         p3_lower_limit: formData.p3_min_value,
         p3_upper_limit: formData.p3_max_value,
-        p3_enabled: formData.p3_enabled,
       };
-      
+
       await apiClient.createInspectionModel(backendData);
       await loadModels();
       setIsDialogOpen(false);
@@ -144,15 +136,12 @@ export default function InspectionModelsPage() {
         description: formData.description,
         p1_lower_limit: formData.p1_min_value,
         p1_upper_limit: formData.p1_max_value,
-        p1_enabled: formData.p1_enabled,
         p2_lower_limit: formData.p2_min_value,
         p2_upper_limit: formData.p2_max_value,
-        p2_enabled: formData.p2_enabled,
         p3_lower_limit: formData.p3_min_value,
         p3_upper_limit: formData.p3_max_value,
-        p3_enabled: formData.p3_enabled,
       };
-      
+
       await apiClient.updateInspectionModel(editingModel.id, backendData);
       await loadModels();
       setIsDialogOpen(false);
@@ -194,16 +183,13 @@ export default function InspectionModelsPage() {
           description: model.description,
           p1_lower_limit: model.p1_lower_limit,
           p1_upper_limit: model.p1_upper_limit,
-          p1_enabled: model.p1_enabled,
           p2_lower_limit: model.p2_lower_limit,
           p2_upper_limit: model.p2_upper_limit,
-          p2_enabled: model.p2_enabled,
           p3_lower_limit: model.p3_lower_limit,
           p3_upper_limit: model.p3_upper_limit,
-          p3_enabled: model.p3_enabled,
           is_active: !model.is_active,
         };
-        
+
         await apiClient.updateInspectionModel(modelId, backendData);
       }
       await loadModels();
@@ -224,13 +210,10 @@ export default function InspectionModelsPage() {
       barcode_pattern: "",
       p1_min_value: model.p1_lower_limit,
       p1_max_value: model.p1_upper_limit,
-      p1_enabled: model.p1_enabled || false,
       p2_min_value: model.p2_lower_limit,
       p2_max_value: model.p2_upper_limit,
-      p2_enabled: model.p2_enabled || false,
       p3_min_value: model.p3_lower_limit,
       p3_max_value: model.p3_upper_limit,
-      p3_enabled: model.p3_enabled || false,
     });
     setIsDialogOpen(true);
   };
@@ -248,13 +231,10 @@ export default function InspectionModelsPage() {
       barcode_pattern: "",
       p1_min_value: 0,
       p1_max_value: 100,
-      p1_enabled: true,
       p2_min_value: 0,
       p2_max_value: 100,
-      p2_enabled: true,
       p3_min_value: 0,
       p3_max_value: 100,
-      p3_enabled: false,
     });
   };
 
@@ -277,13 +257,14 @@ export default function InspectionModelsPage() {
           </div>
           <div className="flex gap-3">
             <Button onClick={loadModels} variant="outline" size="icon">
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+              />
             </Button>
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
                 <Button onClick={startCreating}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  새 모델 추가
+                  <Plus className="h-4 w-4 mr-2" />새 모델 추가
                 </Button>
               </DialogTrigger>
             </Dialog>
@@ -321,17 +302,19 @@ export default function InspectionModelsPage() {
             </Card>
           ) : models.length > 0 ? (
             models.map((model) => (
-              <Card 
-                key={model.id} 
+              <Card
+                key={model.id}
                 className={`relative transition-all duration-200 hover:shadow-md ${
-                  model.is_active ? 'ring-2 ring-primary shadow-lg' : ''
+                  model.is_active ? "ring-2 ring-primary shadow-lg" : ""
                 }`}
               >
                 <CardHeader className="pb-4">
                   <div className="flex items-start justify-between">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
-                        <CardTitle className="text-xl">{model.model_name}</CardTitle>
+                        <CardTitle className="text-xl">
+                          {model.model_name}
+                        </CardTitle>
                         {model.is_active && (
                           <Badge className="bg-green-500 hover:bg-green-600">
                             <CheckCircle className="h-3 w-3 mr-1" />
@@ -365,79 +348,45 @@ export default function InspectionModelsPage() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
-
                   {/* 측정 기준값 */}
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <BarChart3 className="h-4 w-4 text-muted-foreground" />
                       <h4 className="text-sm font-medium">측정 기준값</h4>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 gap-2">
                       {/* P1 */}
-                      <div className={`p-3 rounded-lg border-l-4 ${
-                        model.p1_enabled !== false 
-                          ? 'bg-blue-50 border-blue-500' 
-                          : 'bg-gray-100 border-gray-300'
-                      }`}>
+                      <div className="p-3 rounded-lg border-l-4 bg-blue-50 border-blue-500">
                         <div className="flex justify-between items-center">
-                          <span className={`font-medium text-sm flex items-center gap-2 ${
-                            model.p1_enabled !== false ? 'text-blue-700' : 'text-gray-500'
-                          }`}>
+                          <span className="font-medium text-sm text-blue-700">
                             P1 단계
-                            {model.p1_enabled === false && (
-                              <Badge variant="secondary" className="text-xs">미사용</Badge>
-                            )}
                           </span>
-                          <span className={`font-mono text-sm ${
-                            model.p1_enabled !== false ? 'text-blue-600' : 'text-gray-400'
-                          }`}>
+                          <span className="font-mono text-sm text-blue-600">
                             {model.p1_lower_limit} - {model.p1_upper_limit}
                           </span>
                         </div>
                       </div>
-                      
+
                       {/* P2 */}
-                      <div className={`p-3 rounded-lg border-l-4 ${
-                        model.p2_enabled !== false 
-                          ? 'bg-green-50 border-green-500' 
-                          : 'bg-gray-100 border-gray-300'
-                      }`}>
+                      <div className="p-3 rounded-lg border-l-4 bg-green-50 border-green-500">
                         <div className="flex justify-between items-center">
-                          <span className={`font-medium text-sm flex items-center gap-2 ${
-                            model.p2_enabled !== false ? 'text-green-700' : 'text-gray-500'
-                          }`}>
+                          <span className="font-medium text-sm text-green-700">
                             P2 단계
-                            {model.p2_enabled === false && (
-                              <Badge variant="secondary" className="text-xs">미사용</Badge>
-                            )}
                           </span>
-                          <span className={`font-mono text-sm ${
-                            model.p2_enabled !== false ? 'text-green-600' : 'text-gray-400'
-                          }`}>
+                          <span className="font-mono text-sm text-green-600">
                             {model.p2_lower_limit} - {model.p2_upper_limit}
                           </span>
                         </div>
                       </div>
-                      
+
                       {/* P3 */}
-                      <div className={`p-3 rounded-lg border-l-4 ${
-                        model.p3_enabled !== false 
-                          ? 'bg-purple-50 border-purple-500' 
-                          : 'bg-gray-100 border-gray-300'
-                      }`}>
+                      <div className="p-3 rounded-lg border-l-4 bg-purple-50 border-purple-500">
                         <div className="flex justify-between items-center">
-                          <span className={`font-medium text-sm flex items-center gap-2 ${
-                            model.p3_enabled !== false ? 'text-purple-700' : 'text-gray-500'
-                          }`}>
+                          <span className="font-medium text-sm text-purple-700">
                             P3 단계
-                            {model.p3_enabled === false && (
-                              <Badge variant="secondary" className="text-xs">미사용</Badge>
-                            )}
                           </span>
-                          <span className={`font-mono text-sm ${
-                            model.p3_enabled !== false ? 'text-purple-600' : 'text-gray-400'
-                          }`}>
+                          <span className="font-mono text-sm text-purple-600">
                             {model.p3_lower_limit} - {model.p3_upper_limit}
                           </span>
                         </div>
@@ -448,7 +397,8 @@ export default function InspectionModelsPage() {
                   {/* 생성일 */}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Calendar className="h-3 w-3" />
-                    생성일: {new Date(model.created_at).toLocaleDateString("ko-KR")}
+                    생성일:{" "}
+                    {new Date(model.created_at).toLocaleDateString("ko-KR")}
                   </div>
 
                   {/* 액션 버튼 */}
@@ -478,13 +428,14 @@ export default function InspectionModelsPage() {
             <Card className="col-span-full">
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Database className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">등록된 검사 모델이 없습니다</h3>
+                <h3 className="text-lg font-semibold mb-2">
+                  등록된 검사 모델이 없습니다
+                </h3>
                 <p className="text-muted-foreground mb-4">
                   첫 번째 검사 모델을 추가해보세요
                 </p>
                 <Button onClick={startCreating} variant="outline">
-                  <Plus className="h-4 w-4 mr-2" />
-                  첫 번째 모델 추가
+                  <Plus className="h-4 w-4 mr-2" />첫 번째 모델 추가
                 </Button>
               </CardContent>
             </Card>
@@ -503,7 +454,9 @@ export default function InspectionModelsPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={editingModel ? handleUpdateModel : handleCreateModel}>
+            <form
+              onSubmit={editingModel ? handleUpdateModel : handleCreateModel}
+            >
               <div className="space-y-6 py-4">
                 {/* 기본 정보 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -513,7 +466,10 @@ export default function InspectionModelsPage() {
                       id="name"
                       value={formData.name}
                       onChange={(e) =>
-                        setFormData((prev) => ({ ...prev, name: e.target.value }))
+                        setFormData((prev) => ({
+                          ...prev,
+                          name: e.target.value,
+                        }))
                       }
                       placeholder="검사 모델명을 입력하세요"
                       required
@@ -546,25 +502,12 @@ export default function InspectionModelsPage() {
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     {/* P1 단계 */}
                     <div className="border rounded-lg p-4 space-y-3 bg-blue-50">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium text-blue-700">P1 단계</h4>
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id="p1_enabled"
-                            checked={formData.p1_enabled}
-                            onCheckedChange={(checked) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p1_enabled: checked as boolean,
-                              }))
-                            }
-                          />
-                          <Label htmlFor="p1_enabled" className="text-sm">사용</Label>
-                        </div>
-                      </div>
+                      <h4 className="font-medium text-blue-700">P1 단계</h4>
                       <div className="space-y-3">
                         <div className="space-y-2">
-                          <Label htmlFor="p1_min" className="text-sm">최소값</Label>
+                          <Label htmlFor="p1_min" className="text-sm">
+                            최소값
+                          </Label>
                           <Input
                             id="p1_min"
                             type="number"
@@ -576,12 +519,13 @@ export default function InspectionModelsPage() {
                                 p1_min_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p1_enabled}
-                            required={formData.p1_enabled}
+                            required
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="p1_max" className="text-sm">최대값</Label>
+                          <Label htmlFor="p1_max" className="text-sm">
+                            최대값
+                          </Label>
                           <Input
                             id="p1_max"
                             type="number"
@@ -593,8 +537,7 @@ export default function InspectionModelsPage() {
                                 p1_max_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p1_enabled}
-                            required={formData.p1_enabled}
+                            required
                           />
                         </div>
                       </div>
@@ -602,25 +545,12 @@ export default function InspectionModelsPage() {
 
                     {/* P2 단계 */}
                     <div className="border rounded-lg p-4 space-y-3 bg-green-50">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium text-green-700">P2 단계</h4>
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id="p2_enabled"
-                            checked={formData.p2_enabled}
-                            onCheckedChange={(checked) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p2_enabled: checked as boolean,
-                              }))
-                            }
-                          />
-                          <Label htmlFor="p2_enabled" className="text-sm">사용</Label>
-                        </div>
-                      </div>
+                      <h4 className="font-medium text-green-700">P2 단계</h4>
                       <div className="space-y-3">
                         <div className="space-y-2">
-                          <Label htmlFor="p2_min" className="text-sm">최소값</Label>
+                          <Label htmlFor="p2_min" className="text-sm">
+                            최소값
+                          </Label>
                           <Input
                             id="p2_min"
                             type="number"
@@ -632,12 +562,13 @@ export default function InspectionModelsPage() {
                                 p2_min_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p2_enabled}
-                            required={formData.p2_enabled}
+                            required
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="p2_max" className="text-sm">최대값</Label>
+                          <Label htmlFor="p2_max" className="text-sm">
+                            최대값
+                          </Label>
                           <Input
                             id="p2_max"
                             type="number"
@@ -649,8 +580,7 @@ export default function InspectionModelsPage() {
                                 p2_max_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p2_enabled}
-                            required={formData.p2_enabled}
+                            required
                           />
                         </div>
                       </div>
@@ -658,25 +588,12 @@ export default function InspectionModelsPage() {
 
                     {/* P3 단계 */}
                     <div className="border rounded-lg p-4 space-y-3 bg-purple-50">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium text-purple-700">P3 단계</h4>
-                        <div className="flex items-center space-x-2">
-                          <Checkbox
-                            id="p3_enabled"
-                            checked={formData.p3_enabled}
-                            onCheckedChange={(checked) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p3_enabled: checked as boolean,
-                              }))
-                            }
-                          />
-                          <Label htmlFor="p3_enabled" className="text-sm">사용</Label>
-                        </div>
-                      </div>
+                      <h4 className="font-medium text-purple-700">P3 단계</h4>
                       <div className="space-y-3">
                         <div className="space-y-2">
-                          <Label htmlFor="p3_min" className="text-sm">최소값</Label>
+                          <Label htmlFor="p3_min" className="text-sm">
+                            최소값
+                          </Label>
                           <Input
                             id="p3_min"
                             type="number"
@@ -688,12 +605,13 @@ export default function InspectionModelsPage() {
                                 p3_min_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p3_enabled}
-                            required={formData.p3_enabled}
+                            required
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="p3_max" className="text-sm">최대값</Label>
+                          <Label htmlFor="p3_max" className="text-sm">
+                            최대값
+                          </Label>
                           <Input
                             id="p3_max"
                             type="number"
@@ -705,8 +623,7 @@ export default function InspectionModelsPage() {
                                 p3_max_value: parseFloat(e.target.value) || 0,
                               }))
                             }
-                            disabled={!formData.p3_enabled}
-                            required={formData.p3_enabled}
+                            required
                           />
                         </div>
                       </div>
@@ -725,10 +642,13 @@ export default function InspectionModelsPage() {
                   취소
                 </Button>
                 <Button type="submit" disabled={isSubmitting}>
-                  {isSubmitting 
-                    ? (editingModel ? "수정 중..." : "추가 중...") 
-                    : (editingModel ? "수정 완료" : "추가 완료")
-                  }
+                  {isSubmitting
+                    ? editingModel
+                      ? "수정 중..."
+                      : "추가 중..."
+                    : editingModel
+                    ? "수정 완료"
+                    : "추가 완료"}
                 </Button>
               </DialogFooter>
             </form>

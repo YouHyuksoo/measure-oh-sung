@@ -13,7 +13,7 @@
 ### 1.2. 시스템 개요
 
 - **백엔드:** Python (FastAPI) 기반의 REST API 및 WebSocket 서버.
-- **프론트엔드:** Next.js (React) 기반의 웹 UI (shadcn/ui, Tailwind CSS).
+- **프론트엔드:** Next.js (React) 기반의 웹 UI (shadcn/ui, Tailwind CSS) zustand.
 - **핵심 기능:** 바코드 스캔으로 트리거되는 3단계 계측 루틴, 유연한 검사 설정 및 모델별 상/하한값 관리.
 
 ## 2. 핵심 기능 요구사항
@@ -74,7 +74,7 @@
 
 - **언어:** Python
 - **프레임워크:** FastAPI (비동기 처리 및 내장 WebSocket 지원을 통해 실시간 통신에 최적화)
-- **데이터베이스:** SQLite (기존 `measurements.db` 사용, 신규 테이블 추가)
+- **데이터베이스:** SQLite (`measure_oh_sung.db` 사용)
 - **의존성:** `uvicorn`, `sqlalchemy`, `python-multipart`, `alembic` 등
 
 ### 3.2. 프론트엔드

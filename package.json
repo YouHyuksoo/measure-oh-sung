@@ -8,6 +8,10 @@
     "build": "cd frontend && npm run build",
     "start": "cd frontend && npm run start",
     "lint": "cd frontend && npm run lint",
+    "type-check": "cd frontend && npm run type-check",
+    "type-check:backend": "cd backend && python -m mypy app/ --config-file mypy.ini",
+    "type-check:all": "npm run type-check && npm run type-check:backend",
+    "dev:type-safe": "npm run type-check:all && npm run dev",
     "install:frontend": "cd frontend && npm install",
     "install:backend": "cd backend && pip install -r requirements.txt",
     "setup": "npm run install:frontend && npm run install:backend"

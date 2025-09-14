@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -52,17 +52,8 @@ export function RealTimeChart({
     p3: { avg: 0, min: 0, max: 0, trend: 'stable' as 'up' | 'down' | 'stable' },
   })
 
-  // 데이터 업데이트
-  useEffect(() => {
-    if (!isPaused && isRealTime) {
-      const limitedData = data.slice(-maxDataPoints)
-      setChartData(limitedData)
-      calculateStatistics(limitedData)
-    }
-  }, [data, maxDataPoints, isPaused, isRealTime])
-
   // 통계 계산
-  const calculateStatistics = (data: MeasurementPoint[]) => {
+  const calculateStatistics = useCallback((data: MeasurementPoint[]) => {
     if (data.length === 0) return
 
     const phases = ['p1', 'p2', 'p3'] as const
@@ -100,7 +91,16 @@ export function RealTimeChart({
     })
 
     setStatistics(newStats)
-  }
+  }, [statistics, setStatistics])
+
+  // 데이터 업데이트
+  useEffect(() => {
+    if (!isPaused && isRealTime) {
+      const limitedData = data.slice(-maxDataPoints)
+      setChartData(limitedData)
+      calculateStatistics(limitedData)
+    }
+  }, [data, maxDataPoints, isPaused, isRealTime, calculateStatistics])
 
   const handleTogglePause = () => {
     setIsPaused(!isPaused)

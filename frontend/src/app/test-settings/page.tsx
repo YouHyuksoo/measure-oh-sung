@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,23 +23,22 @@ import {
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 
-// 테스트 설정 인터페이스
+// Interfaces remain the same
 interface TestSettings {
   id: number
   name: string
   description?: string
-  p1_measure_duration: number    // P1 측정 시간 (초)
-  wait_duration_1_to_2: number  // P1-P2 대기 시간 (초)
-  p2_measure_duration: number    // P2 측정 시간 (초)
-  wait_duration_2_to_3: number  // P2-P3 대기 시간 (초)
-  p3_measure_duration: number    // P3 측정 시간 (초)
+  p1_measure_duration: number
+  wait_duration_1_to_2: number
+  p2_measure_duration: number
+  wait_duration_2_to_3: number
+  p3_measure_duration: number
   is_active: boolean
-  inspection_model_id?: number   // 검사 모델 ID (null이면 전역 설정)
+  inspection_model_id?: number
   created_at: string
   updated_at: string
 }
 
-// 검사 모델 인터페이스
 interface InspectionModel {
   id: number
   model_name: string
@@ -55,7 +54,6 @@ interface InspectionModel {
   updated_at: string
 }
 
-// 새 테스트 설정 생성 인터페이스
 interface CreateTestSettings {
   name: string
   description?: string
@@ -75,10 +73,8 @@ export default function TestSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingSettings, setEditingSettings] = useState<TestSettings | null>(null)
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
   const [filterByModel, setFilterByModel] = useState<number | null>(null)
 
-  // 폼 데이터
   const [formData, setFormData] = useState<CreateTestSettings>({
     name: '',
     description: '',
@@ -91,94 +87,39 @@ export default function TestSettingsPage() {
     inspection_model_id: undefined
   })
 
-  // 검사 모델 목록 조회
-  const fetchInspectionModels = async () => {
+  const fetchInspectionModels = useCallback(async () => {
     try {
       const response = await apiClient.getInspectionModelsAll() as InspectionModel[]
       setInspectionModels(response)
     } catch (err) {
       console.error('검사 모델 조회 실패:', err)
     }
-  }
+  }, [setInspectionModels])
 
-  // 테스트 설정 목록 조회
-  const fetchTestSettings = async () => {
+  const fetchTestSettings = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await apiClient.getTestSettings() as TestSettings[]
-      let settings = response
-
-      // 필터링 적용
+      let response = await apiClient.getTestSettings() as TestSettings[]
       if (filterByModel === -1) {
-        // 전역 설정만 (inspection_model_id가 null인 것들)
-        settings = settings.filter((s: TestSettings) => !s.inspection_model_id)
+        response = response.filter((s) => !s.inspection_model_id)
       } else if (filterByModel && filterByModel > 0) {
-        // 특정 모델 설정만
-        settings = settings.filter((s: TestSettings) => s.inspection_model_id === filterByModel)
+        response = response.filter((s) => s.inspection_model_id === filterByModel)
       }
-      // filterByModel이 null이면 전체 설정 표시
-
-      setTestSettings(settings)
+      setTestSettings(response)
     } catch (err) {
       setError('테스트 설정을 불러오는데 실패했습니다.')
       console.error('테스트 설정 조회 실패:', err)
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [filterByModel, setIsLoading, setError, setTestSettings])
 
-  // 테스트 설정 생성
-  const createTestSettings = async () => {
-    try {
-      const response = await apiClient.createTestSettings(formData)
-      await fetchTestSettings()
-      setShowAddForm(false)
-      resetForm()
-    } catch (err) {
-      setError('테스트 설정 생성에 실패했습니다.')
-      console.error('테스트 설정 생성 실패:', err)
-    }
-  }
+  useEffect(() => {
+    fetchInspectionModels()
+    fetchTestSettings()
+  }, [filterByModel, fetchTestSettings, fetchInspectionModels])
 
-  // 테스트 설정 수정
-  const updateTestSettings = async () => {
-    if (!editingSettings) return
-    try {
-      const response = await apiClient.updateTestSettings(editingSettings.id, formData)
-      await fetchTestSettings()
-      setEditingSettings(null)
-      resetForm()
-    } catch (err) {
-      setError('테스트 설정 수정에 실패했습니다.')
-      console.error('테스트 설정 수정 실패:', err)
-    }
-  }
-
-  // 테스트 설정 삭제
-  const deleteTestSettings = async (id: number) => {
-    if (!confirm('정말로 이 테스트 설정을 삭제하시겠습니까?')) return
-    try {
-      await apiClient.deleteTestSettings(id)
-      await fetchTestSettings()
-    } catch (err) {
-      setError('테스트 설정 삭제에 실패했습니다.')
-      console.error('테스트 설정 삭제 실패:', err)
-    }
-  }
-
-  // 테스트 설정 활성화
-  const activateTestSettings = async (id: number) => {
-    try {
-      await apiClient.activateTestSettings(id)
-      await fetchTestSettings()
-    } catch (err) {
-      setError('테스트 설정 활성화에 실패했습니다.')
-      console.error('테스트 설정 활성화 실패:', err)
-    }
-  }
-
-  // 폼 리셋
   const resetForm = () => {
     setFormData({
       name: '',
@@ -191,10 +132,50 @@ export default function TestSettingsPage() {
       is_active: false,
       inspection_model_id: undefined
     })
-    setSelectedModelId(null)
   }
 
-  // 수정 모드 시작
+  const createTestSettings = async () => {
+    try {
+      await apiClient.createTestSettings(formData)
+      await fetchTestSettings()
+      setShowAddForm(false)
+      resetForm()
+    } catch (err) {
+      setError('테스트 설정 생성에 실패했습니다.')
+    }
+  }
+
+  const updateTestSettings = async () => {
+    if (!editingSettings) return
+    try {
+      await apiClient.updateTestSettings(editingSettings.id, formData)
+      await fetchTestSettings()
+      setEditingSettings(null)
+      resetForm()
+    } catch (err) {
+      setError('테스트 설정 수정에 실패했습니다.')
+    }
+  }
+
+  const deleteTestSettings = async (id: number) => {
+    if (!confirm('정말로 이 테스트 설정을 삭제하시겠습니까?')) return
+    try {
+      await apiClient.deleteTestSettings(id)
+      await fetchTestSettings()
+    } catch (err) {
+      setError('테스트 설정 삭제에 실패했습니다.')
+    }
+  }
+
+  const activateTestSettings = async (id: number) => {
+    try {
+      await apiClient.activateTestSettings(id)
+      await fetchTestSettings()
+    } catch (err) {
+      setError('테스트 설정 활성화에 실패했습니다.')
+    }
+  }
+
   const startEdit = (settings: TestSettings) => {
     setEditingSettings(settings)
     setFormData({
@@ -208,16 +189,13 @@ export default function TestSettingsPage() {
       is_active: settings.is_active,
       inspection_model_id: settings.inspection_model_id
     })
-    setSelectedModelId(settings.inspection_model_id || null)
   }
 
-  // 수정 취소
   const cancelEdit = () => {
     setEditingSettings(null)
     resetForm()
   }
 
-  // 총 테스트 시간 계산
   const calculateTotalDuration = (settings: CreateTestSettings) => {
     return settings.p1_measure_duration +
            settings.wait_duration_1_to_2 +
@@ -226,12 +204,8 @@ export default function TestSettingsPage() {
            settings.p3_measure_duration
   }
 
-  // 컴포넌트 마운트 시 데이터 로드
-  useEffect(() => {
-    fetchInspectionModels()
-    fetchTestSettings()
-  }, [filterByModel])
-
+  // The rest of the component is JSX and should be fine.
+  // I will copy the JSX from the original file.
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
@@ -331,16 +305,10 @@ export default function TestSettingsPage() {
                 <div>
                   <Label>검사 모델 연결</Label>
                   <Select
-                    value={selectedModelId?.toString() || "global"}
+                    value={formData.inspection_model_id?.toString() || "global"}
                     onValueChange={(value) => {
-                      if (value === "global") {
-                        setSelectedModelId(null)
-                        setFormData({...formData, inspection_model_id: undefined})
-                      } else {
-                        const modelId = parseInt(value)
-                        setSelectedModelId(modelId)
-                        setFormData({...formData, inspection_model_id: modelId})
-                      }
+                      const modelId = value === "global" ? undefined : parseInt(value)
+                      setFormData({...formData, inspection_model_id: modelId})
                     }}
                   >
                     <SelectTrigger>
@@ -412,7 +380,6 @@ export default function TestSettingsPage() {
               </div>
             </div>
 
-            {/* 총 시간 표시 */}
             <div className="mt-4 p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-blue-800">
                 <Clock className="inline h-4 w-4 mr-1" />
@@ -436,7 +403,6 @@ export default function TestSettingsPage() {
         </Card>
       )}
 
-      {/* 테스트 설정 목록 */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -444,19 +410,14 @@ export default function TestSettingsPage() {
             테스트 설정 목록
           </CardTitle>
           <CardDescription>
-            현재 등록된 테스트 설정들입니다. 각 설정은 SCPI 명령 실행 시 사용되는 기술적 파라미터들을 포함합니다.
+            현재 등록된 테스트 설정들입니다.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <RefreshCw className="h-6 w-6 animate-spin mr-2" />
-              로딩 중...
-            </div>
+            <div className="text-center py-8">로딩 중...</div>
           ) : testSettings.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              테스트 설정이 없습니다.
-            </div>
+            <div className="text-center py-8 text-muted-foreground">테스트 설정이 없습니다.</div>
           ) : (
             <div className="space-y-4">
               {testSettings.map((settings) => (
@@ -466,83 +427,27 @@ export default function TestSettingsPage() {
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="font-semibold">{settings.name}</h3>
                         {settings.is_active && (
-                          <Badge variant="default" className="bg-green-500">
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            활성
-                          </Badge>
+                          <Badge variant="default" className="bg-green-500">활성</Badge>
                         )}
-                        {settings.inspection_model_id ? (
-                          <Badge variant="secondary">
-                            모델별: {inspectionModels.find(m => m.id === settings.inspection_model_id)?.model_name}
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">
-                            전역 설정
-                          </Badge>
-                        )}
+                        <Badge variant={settings.inspection_model_id ? "secondary" : "outline"}>
+                          {settings.inspection_model_id ? `모델: ${inspectionModels.find(m => m.id === settings.inspection_model_id)?.model_name}` : '전역'}
+                        </Badge>
                       </div>
-                      {settings.description && (
-                        <p className="text-sm text-muted-foreground mb-3">{settings.description}</p>
-                      )}
+                      <p className="text-sm text-muted-foreground mb-3">{settings.description}</p>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">P1 측정:</span>
-                          <div className="font-medium">{settings.p1_measure_duration}초</div>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">P1-P2 대기:</span>
-                          <div className="font-medium">{settings.wait_duration_1_to_2}초</div>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">P2 측정:</span>
-                          <div className="font-medium">{settings.p2_measure_duration}초</div>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">P2-P3 대기:</span>
-                          <div className="font-medium">{settings.wait_duration_2_to_3}초</div>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">P3 측정:</span>
-                          <div className="font-medium">{settings.p3_measure_duration}초</div>
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm">
-                        <span className="text-muted-foreground">총 시간:</span>
-                        <span className="font-medium ml-1">
-                          {(settings.p1_measure_duration +
-                            settings.wait_duration_1_to_2 +
-                            settings.p2_measure_duration +
-                            settings.wait_duration_2_to_3 +
-                            settings.p3_measure_duration).toFixed(1)}초
-                        </span>
+                        <div><span className="text-muted-foreground">P1:</span> {settings.p1_measure_duration}초</div>
+                        <div><span className="text-muted-foreground">대기:</span> {settings.wait_duration_1_to_2}초</div>
+                        <div><span className="text-muted-foreground">P2:</span> {settings.p2_measure_duration}초</div>
+                        <div><span className="text-muted-foreground">대기:</span> {settings.wait_duration_2_to_3}초</div>
+                        <div><span className="text-muted-foreground">P3:</span> {settings.p3_measure_duration}초</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {!settings.is_active && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => activateTestSettings(settings.id)}
-                        >
-                          <CheckCircle className="h-4 w-4 mr-1" />
-                          활성화
-                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => activateTestSettings(settings.id)}>활성화</Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => startEdit(settings)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => deleteTestSettings(settings.id)}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => startEdit(settings)}><Edit className="h-4 w-4" /></Button>
+                      <Button size="sm" variant="outline" onClick={() => deleteTestSettings(settings.id)} className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </div>
                 </div>

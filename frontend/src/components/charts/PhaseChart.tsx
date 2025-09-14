@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -51,9 +51,9 @@ interface PhaseChartProps {
   onTogglePause?: () => void;
   onClear?: () => void;
   // 자동 검사 관련 props
-  isActive?: boolean;      // 현재 활성화된 단계인지
-  isCompleted?: boolean;   // 완료된 단계인지
-  isPending?: boolean;     // 대기 중인 단계인지
+  isActive?: boolean; // 현재 활성화된 단계인지
+  isCompleted?: boolean; // 완료된 단계인지
+  isPending?: boolean; // 대기 중인 단계인지
 }
 
 export function PhaseChart({
@@ -92,7 +92,7 @@ export function PhaseChart({
         text: "text-blue-900 font-bold",
       };
     }
-    
+
     if (isCompleted) {
       // 완료된 단계 - 밝은 초록
       return {
@@ -102,7 +102,7 @@ export function PhaseChart({
         text: "text-emerald-900 font-bold",
       };
     }
-    
+
     if (isPending) {
       // 대기 중인 단계 - 밝은 주황
       return {
@@ -112,7 +112,7 @@ export function PhaseChart({
         text: "text-orange-900 font-bold",
       };
     }
-    
+
     // 기본 상태 - 깔끔한 회색
     return {
       main: "#6b7280",
@@ -124,6 +124,62 @@ export function PhaseChart({
 
   const colors = getPhaseColor();
 
+  // 통계 계산
+  const calculateStatistics = useCallback(
+    (data: MeasurementPoint[]) => {
+      if (data.length === 0) {
+        setStatistics({
+          avg: 0,
+          min: 0,
+          max: 0,
+          count: 0,
+          passRate: 0,
+          trend: "stable",
+        });
+        return;
+      }
+
+      const values = data.map((d) => d.value).filter((v) => v !== undefined);
+
+      if (values.length > 0) {
+        const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+
+        // 합격률 계산
+        const passCount = data.filter((d) => d.result === "PASS").length;
+        const passRate = data.length > 0 ? (passCount / data.length) * 100 : 0;
+
+        // 트렌드 계산 (최근 5개 데이터점 기준)
+        let trend: "up" | "down" | "stable" = "stable";
+        if (values.length >= 5) {
+          const recent = values.slice(-5);
+          const firstHalf = recent.slice(0, Math.floor(recent.length / 2));
+          const secondHalf = recent.slice(Math.floor(recent.length / 2));
+          const firstAvg =
+            firstHalf.reduce((sum, val) => sum + val, 0) / firstHalf.length;
+          const secondAvg =
+            secondHalf.reduce((sum, val) => sum + val, 0) / secondHalf.length;
+
+          const diff = secondAvg - firstAvg;
+          const threshold = (max - min) * 0.05; // 변동폭의 5%를 임계값으로
+          trend =
+            Math.abs(diff) < threshold ? "stable" : diff > 0 ? "up" : "down";
+        }
+
+        setStatistics({
+          avg: parseFloat(avg.toFixed(2)),
+          min: parseFloat(min.toFixed(2)),
+          max: parseFloat(max.toFixed(2)),
+          count: data.length,
+          passRate: parseFloat(passRate.toFixed(1)),
+          trend,
+        });
+      }
+    },
+    [setStatistics]
+  );
+
   // 데이터 업데이트
   useEffect(() => {
     if (!isPaused && isRealTime) {
@@ -131,60 +187,7 @@ export function PhaseChart({
       setChartData(limitedData);
       calculateStatistics(limitedData);
     }
-  }, [data, maxDataPoints, isPaused, isRealTime]);
-
-  // 통계 계산
-  const calculateStatistics = (data: MeasurementPoint[]) => {
-    if (data.length === 0) {
-      setStatistics({
-        avg: 0,
-        min: 0,
-        max: 0,
-        count: 0,
-        passRate: 0,
-        trend: "stable",
-      });
-      return;
-    }
-
-    const values = data.map((d) => d.value).filter((v) => v !== undefined);
-
-    if (values.length > 0) {
-      const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-
-      // 합격률 계산
-      const passCount = data.filter((d) => d.result === "PASS").length;
-      const passRate = data.length > 0 ? (passCount / data.length) * 100 : 0;
-
-      // 트렌드 계산 (최근 5개 데이터점 기준)
-      let trend: "up" | "down" | "stable" = "stable";
-      if (values.length >= 5) {
-        const recent = values.slice(-5);
-        const firstHalf = recent.slice(0, Math.floor(recent.length / 2));
-        const secondHalf = recent.slice(Math.floor(recent.length / 2));
-        const firstAvg =
-          firstHalf.reduce((sum, val) => sum + val, 0) / firstHalf.length;
-        const secondAvg =
-          secondHalf.reduce((sum, val) => sum + val, 0) / secondHalf.length;
-
-        const diff = secondAvg - firstAvg;
-        const threshold = (max - min) * 0.05; // 변동폭의 5%를 임계값으로
-        trend =
-          Math.abs(diff) < threshold ? "stable" : diff > 0 ? "up" : "down";
-      }
-
-      setStatistics({
-        avg: parseFloat(avg.toFixed(2)),
-        min: parseFloat(min.toFixed(2)),
-        max: parseFloat(max.toFixed(2)),
-        count: data.length,
-        passRate: parseFloat(passRate.toFixed(1)),
-        trend,
-      });
-    }
-  };
+  }, [data, maxDataPoints, isPaused, isRealTime, calculateStatistics]);
 
   const handleTogglePause = () => {
     setIsPaused(!isPaused);
@@ -232,21 +235,24 @@ export function PhaseChart({
 
   const getCardClass = () => {
     let baseClass = `${colors.bg} ${colors.border} transition-all duration-500 rounded-lg`;
-    
+
     if (isActive) {
       // 활성 단계: 강렬한 파란색 + 맥박 효과 + 글로우
-      baseClass += " animate-pulse shadow-2xl shadow-blue-400 ring-4 ring-blue-500 ring-opacity-50 transform scale-105";
+      baseClass +=
+        " animate-pulse shadow-2xl shadow-blue-400 ring-4 ring-blue-500 ring-opacity-50 transform scale-105";
     } else if (isCompleted) {
       // 완료 단계: 초록색 글로우
-      baseClass += " shadow-xl shadow-emerald-300 ring-2 ring-emerald-400 ring-opacity-30";
+      baseClass +=
+        " shadow-xl shadow-emerald-300 ring-2 ring-emerald-400 ring-opacity-30";
     } else if (isPending) {
       // 대기 단계: 주황색 글로우
-      baseClass += " shadow-lg shadow-orange-300 ring-2 ring-orange-400 ring-opacity-30";
+      baseClass +=
+        " shadow-lg shadow-orange-300 ring-2 ring-orange-400 ring-opacity-30";
     } else {
       // 기본 상태: 부드러운 그림자
       baseClass += " hover:shadow-md shadow-sm";
     }
-    
+
     return baseClass;
   };
 
@@ -347,7 +353,9 @@ export function PhaseChart({
                 <YAxis
                   tick={{ fontSize: 10 }}
                   domain={
-                    limits ? [limits.lower * 0.8, limits.upper * 1.2] : "auto"
+                    limits
+                      ? [limits.lower * 0.8, limits.upper * 1.2]
+                      : undefined
                   }
                 />
                 <Tooltip
@@ -383,14 +391,14 @@ export function PhaseChart({
                   name={`${phase} 측정값`}
                   connectNulls={false}
                   dot={(props) => {
-                    const { payload } = props;
+                    const { payload, cx, cy } = props;
                     let color = colors.main;
                     if (payload?.result === "PASS") {
                       color = "#10b981";
                     } else if (payload?.result === "FAIL") {
                       color = "#ef4444";
                     }
-                    return <circle {...props} fill={color} r={3} />;
+                    return <circle cx={cx} cy={cy} fill={color} r={3} />;
                   }}
                 />
               </LineChart>

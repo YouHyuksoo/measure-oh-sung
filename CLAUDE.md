@@ -1,102 +1,171 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Claude Code 작업 지침서 - Windows 개발 환경 전용
 
-오빠클라우드 라고 호칭하고 , 한국어로 대답해.
-window 환경에서 개발하고 있으므로 cmd 명령으로 사용할것.
+## 🎯 기본 원칙
 
-## Project Architecture
+- **호칭**: 오빠야!
+- **언어**: 한국어로 응답
+- **환경**: Windows CMD 명령어만 사용
+- **경로**: Windows 스타일 백슬래시(`\`) 사용
 
-This is a full-stack application with separate backend and frontend:
+---
 
-- **Backend**: Python FastAPI application in `backend/` directory
+## 📋 핵심 규칙
 
-  - FastAPI with async/await patterns
-  - SQLAlchemy ORM with PostgreSQL (psycopg2-binary for production)
-  - Pydantic for data validation and serialization
-  - JWT authentication with python-jose
-  - Structured as: `app/api/`, `app/models/`, `app/schemas/`, `app/services/`, `app/core/`
+### 1. 셸 및 환경 규칙
 
-- **Frontend**: Next.js 15 with React 19 in `frontend/` directory
-  - TypeScript with strict mode
-  - Tailwind CSS v3 for styling
-  - Modern React with function components and hooks only
+- **필수**: CMD 기준으로만 명령어 작성
+- **금지**: Bash, WSL, Git Bash 등 다른 셸 사용 금지
+- **경로**: Windows 스타일(`D:\Project\...`) 만 사용
+- **금지**: Unix/Linux 스타일 경로(`/bin`, `/usr` 등) 절대 사용 금지
 
-## Common Commands
+### 2. 가상환경(venv) 규칙
 
-### Development Setup
+- **Python 실행**: 반드시 `backend\.venv\Scripts\python.exe` 사용
+- **실행 방식**: `python -m <모듈>` 패턴 권장
+- **금지**: `.venvScriptspython.exe` 같은 축약형 사용 금지
 
-```bash
-# Initial project setup (run once)
-setup_project.bat
+### 3. Alembic 명령 규칙
 
-# Or install dependencies separately:
-npm run install:frontend    # Install frontend deps from root
-npm run install:backend     # Install backend deps from root
+**허용되는 명령어만 사용:**
+
+```cmd
+python -m alembic current        # 상태 확인
+python -m alembic heads          # 최신 리비전 확인
+python -m alembic upgrade head   # 최신으로 업그레이드
 ```
 
-### Development Servers
+**절대 금지:** `alembic downgrade` 명령어
 
-```bash
-# Frontend (Next.js) - runs on http://localhost:3000
-npm run dev                 # From root directory
-# OR
+### 4. 실행 전 검증 규칙
+
+명령어 실행 전 반드시 다음 정보 출력:
+
+1. 현재 작업 디렉터리
+2. 사용하는 Python 경로 (`.venv\Scripts\python.exe`)
+3. 실행하려는 구체적인 명령어
+
+### 5. 보안 및 안전 규칙
+
+**절대 금지:**
+
+- `sudo`, `rm -rf`, `--force` 등 위험 명령
+- 데이터베이스 파괴적 동작 (스키마 드롭, 롤백)
+- 즉시 실행 (반드시 검증 → 실행 2단계)
+
+### 6. 명령 생성 정책
+
+- 지정된 표준 명령어 사전 외 명령 생성 금지
+- 조건 불충족 시: **"허용되지 않은 명령어"** 출력
+- 동일 명령어 중복 출력 금지
+
+---
+
+## 🏗️ 프로젝트 구조
+
+### Backend (Python FastAPI)
+
+```
+backend/
+├── app/
+│   ├── api/        # API 엔드포인트
+│   ├── models/     # SQLAlchemy 모델
+│   ├── schemas/    # Pydantic 모델
+│   ├── services/   # 비즈니스 로직
+│   └── core/       # 설정 및 유틸리티
+└── .venv/          # 가상환경
+```
+
+### Frontend (Next.js 15 + React 19)
+
+```
+frontend/
+├── src/            # 소스코드
+├── public/         # 정적 파일
+└── node_modules/   # 의존성
+```
+
+---
+
+## ⚡ 주요 명령어
+
+### 개발 환경 설정
+
+```cmd
+setup_project.bat                    # 초기 프로젝트 설정
+npm run install:frontend             # Frontend 의존성 설치
+npm run install:backend              # Backend 의존성 설치
+```
+
+### 개발 서버 실행
+
+```cmd
+# Frontend (포트 3000)
+npm run dev
 start_frontend.bat
 
-# Backend (FastAPI) - runs on http://localhost:8000
+# Backend (포트 8000)
 start_backend.bat
-# OR manually:
-cd backend && .venv\Scripts\activate && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Code Quality
-
-```bash
-# Linting (from root)
-npm run lint
-
-# Backend virtual environment activation
 activate_backend.bat
 ```
 
-### Testing
+### 코드 품질
 
-- Backend: Uses pytest with pytest-asyncio for async tests
-- Frontend: Configuration suggests Jest (check frontend/package.json for test scripts)
+```cmd
+npm run lint                         # 린팅 실행
+```
 
-## API Documentation
+---
+
+## 🛠️ 기술 스택
+
+### Backend
+
+- **프레임워크**: FastAPI (async/await 패턴)
+- **ORM**: SQLAlchemy + PostgreSQL
+- **인증**: JWT (python-jose)
+- **검증**: Pydantic
+- **테스팅**: pytest + pytest-asyncio
+
+### Frontend
+
+- **프레임워크**: Next.js 15 + React 19
+- **언어**: TypeScript (strict mode)
+- **스타일링**: Tailwind CSS v3
+- **상태관리**: Zustand
+- **컴포넌트**: 함수형 컴포넌트 + Hooks만 사용
+
+---
+
+## 📡 API 문서
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Code Standards
+---
 
-### Backend (Python/FastAPI)
+## 📋 코딩 표준
 
-- Use async/await for all endpoints and database operations
-- RESTful API design with `/api/v1/` prefix
-- Pydantic models for request/response validation in `app/schemas/`
-- SQLAlchemy models in `app/models/` with snake_case table/column names
-- Business logic in `app/services/`
-- Environment variables for configuration (python-dotenv)
+### Backend 규칙
 
-### Frontend (Next.js/React)
+- 모든 엔드포인트에서 async/await 사용
+- RESTful API 설계 (`/api/v1/` 접두사)
+- snake_case (테이블/컬럼명)
+- PascalCase (클래스명)
 
-- TypeScript strict mode - no `any` types allowed
-- Function components with React Hooks only
-- Props interfaces defined at component top
-- Tailwind CSS classes only (no inline styles)
-- Component naming: PascalCase files and exports
-- Path alias: `@/*` maps to `./src/*`
+### Frontend 규칙
 
-### General
+- TypeScript strict mode (`any` 타입 금지)
+- 함수형 컴포넌트 + Hooks만 사용
+- Tailwind CSS만 사용 (인라인 스타일 금지)
+- PascalCase (컴포넌트 파일명/export명)
+- 경로 별칭: `@/*` → `./src/*`
 
-- ESLint configuration covers frontend code only
-- Git ignores: `frontend/node_modules/`, `backend/.venv/`, `frontend/.next/`, `.env*`
-- Korean language support in development (Cursor rules specify Korean responses)
+---
 
-## Database
+## 🗄️ 데이터베이스
 
-- PostgreSQL in production (psycopg2-binary)
-- SQLAlchemy ORM with Alembic for migrations
-- Models follow: PascalCase classes, snake_case tables/columns
+- **운영**: PostgreSQL (psycopg2-binary)
+- **ORM**: SQLAlchemy + Alembic 마이그레이션
+- **네이밍**: PascalCase 클래스, snake_case 테이블/컬럼

@@ -4,6 +4,7 @@ from .measurement import measurement
 from .device import device
 from .system_log import system_log
 from .inspection_timer import inspection_timer_settings
+from .barcode_scanner import barcode_scanner
 
 __all__ = [
     "test_settings",
@@ -11,5 +12,6 @@ __all__ = [
     "measurement",
     "device",
     "system_log",
-    "inspection_timer_settings"
+    "inspection_timer_settings",
+    "barcode_scanner"
 ]

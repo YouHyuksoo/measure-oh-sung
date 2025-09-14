@@ -46,6 +46,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  // WebSocket 연결 (선택적)
   const wsUrl =
     process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/inspection";
   const { isConnected: wsConnected, lastMessage } = useWebSocket(wsUrl);
@@ -332,7 +333,10 @@ export default function Home() {
                       바코드 스캔
                     </h4>
                   </div>
-                  <Badge variant="outline" className="border-blue-300 text-blue-600 dark:text-blue-400 text-xs px-2 py-0">
+                  <Badge
+                    variant="outline"
+                    className="border-blue-300 text-blue-600 dark:text-blue-400 text-xs px-2 py-0"
+                  >
                     대기 중
                   </Badge>
                 </div>

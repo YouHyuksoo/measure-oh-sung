@@ -5,13 +5,9 @@ from enum import Enum
 
 class DeviceType(str, Enum):
     """장비 타입 열거형"""
-    MULTIMETER = "MULTIMETER"
-    OSCILLOSCOPE = "OSCILLOSCOPE"
-    POWER_SUPPLY = "POWER_SUPPLY"
-    FUNCTION_GENERATOR = "FUNCTION_GENERATOR"
     POWER_METER = "POWER_METER"
     SAFETY_TESTER = "SAFETY_TESTER"
-    OTHER = "OTHER"
+    BARCODE_SCANNER = "BARCODE_SCANNER"
 
 class ConnectionStatus(str, Enum):
     """연결 상태 열거형"""

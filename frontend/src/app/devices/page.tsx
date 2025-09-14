@@ -1,13 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { useState, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,6 +12,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   RefreshCw,
   AlertCircle,
@@ -38,8 +39,24 @@ import {
   Edit,
   Trash2,
   Copy,
+  Save,
+  X,
 } from "lucide-react";
 import { apiClient } from "@/lib/api";
+
+// 설비 유형 enum
+enum DeviceType {
+  POWER_METER = "POWER_METER",
+  SAFETY_TESTER = "SAFETY_TESTER",
+  BARCODE_SCANNER = "BARCODE_SCANNER",
+}
+
+// 설비 유형 표시명
+const DEVICE_TYPE_LABELS = {
+  [DeviceType.POWER_METER]: "전력측정설비",
+  [DeviceType.SAFETY_TESTER]: "안전시험기",
+  [DeviceType.BARCODE_SCANNER]: "바코드스캐너",
+} as const;
 
 interface SerialPort {
   name: string;
@@ -53,9 +70,8 @@ interface InterfaceConfig {
 
 interface TestResponse {
   ok: boolean;
+  message?: string;
   response?: string;
-  code?: string;
-  message: string;
 }
 
 interface LogEntry {
@@ -64,120 +80,50 @@ interface LogEntry {
   message: string;
 }
 
-interface BarcodePort {
-  port: string;
-  description: string;
-  hwid: string;
-  type: "detected" | "manual";
-}
-
-interface BarcodeSettings {
-  port: string;
-  baudrate: number;
-  data_bits: number;
-  stop_bits: number;
-  parity: "N" | "E" | "O";
-  timeout: number;
-}
-
-interface BarcodeTestResult {
-  success: boolean;
-  message: string;
-  data?: string;
-  raw_data?: string;
-}
-
-interface DeviceCommand {
+interface Device {
   id: number;
   name: string;
-  category: string;
-  command: string;
-  description?: string;
-  has_response: boolean;
-  response_pattern?: string;
+  device_type: DeviceType;
+  manufacturer: string;
+  model: string;
+  port: string;
+  baud_rate: number;
+  data_bits: number;
+  stop_bits: number;
+  parity: string;
   timeout: number;
-  retry_count: number;
-  parameters?: Record<string, any>;
-  parameter_description?: string;
-  is_active: boolean;
-  order_sequence: number;
-  created_at: string;
-  updated_at: string;
+  connection_status?: string;
 }
 
-interface CommandExecutionResult {
-  success: boolean;
-  response_data?: string;
-  error_message?: string;
-  execution_time: number;
-  timestamp: string;
-}
-
-export default function Gpt9000DevicePage() {
+export default function SafetyTesterDevicePage() {
   // 공통 포트 목록 (모든 장비가 공유)
   const [commonPorts, setCommonPorts] = useState<SerialPort[]>([]);
 
-  // 포트 및 연결 상태
-  const [selectedPort, setSelectedPort] = useState<string>("");
-  const [isConnected, setIsConnected] = useState<boolean>(false);
-
-  // 인터페이스 설정
-  const [interfaceConfig, setInterfaceConfig] = useState<InterfaceConfig>({
-    type: "RS232",
-    baud: 115200,
+  // 설비 등록 관련 상태
+  const [registeredDevices, setRegisteredDevices] = useState<Device[]>([]);
+  const [isAddDeviceOpen, setIsAddDeviceOpen] = useState(false);
+  const [isEditDeviceOpen, setIsEditDeviceOpen] = useState(false);
+  const [editingDevice, setEditingDevice] = useState<Device | null>(null);
+  const [newDevice, setNewDevice] = useState({
+    name: "",
+    device_type: DeviceType.SAFETY_TESTER,
+    manufacturer: "",
+    model: "",
+    port: "",
+    baud_rate: 9600,
+    data_bits: 8,
+    stop_bits: 1,
+    parity: "None",
+    timeout: 5,
   });
 
   // UI 상태
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastIdnResponse, setLastIdnResponse] = useState<string>("");
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [rmtActive, setRmtActive] = useState(false);
-
-  // 바코드 스캐너 관련 상태
-  const [barcodePorts, setBarcodePorts] = useState<BarcodePort[]>([]);
-  const [barcodeSettings, setBarcodeSettings] = useState<BarcodeSettings>({
-    port: "",
-    baudrate: 9600,
-    data_bits: 8,
-    stop_bits: 1,
-    parity: "N",
-    timeout: 1,
-  });
-  const [barcodeConnected, setBarcodeConnected] = useState(false);
-  const [barcodeTestData, setBarcodeTestData] = useState<string>("");
-  const [barcodeLogs, setBarcodeLogs] = useState<LogEntry[]>([]);
-
-  // 전력 측정 설비 관련 상태
-  const [selectedPowerMeterPort, setSelectedPowerMeterPort] =
-    useState<string>("");
-  const [powerMeterConnected, setPowerMeterConnected] =
-    useState<boolean>(false);
-  const [powerMeterInterface, setPowerMeterInterface] =
-    useState<InterfaceConfig>({
-      type: "RS232",
-      baud: 9600,
-    });
-  const [lastPowerMeterResponse, setLastPowerMeterResponse] =
-    useState<string>("");
-  const [powerMeterLogs, setPowerMeterLogs] = useState<LogEntry[]>([]);
-
-  // 명령어 관리 관련 상태
-  const [showCommandManager, setShowCommandManager] = useState<boolean>(false);
-  const [selectedDeviceForCommands, setSelectedDeviceForCommands] = useState<string>("");
-  const [deviceCommands, setDeviceCommands] = useState<DeviceCommand[]>([]);
-  const [commandExecutionResults, setCommandExecutionResults] = useState<Record<string, CommandExecutionResult>>({});
-  const [commandLogs, setCommandLogs] = useState<LogEntry[]>([]);
 
   // 유효한 보드레이트 값들
   const validBaudRates = [9600, 19200, 38400, 57600, 115200];
-
-  useEffect(() => {
-    loadCommonPorts();
-    loadInterfaceConfig();
-    loadBarcodePorts();
-    loadPowerMeterInterface();
-  }, []);
 
   const addLog = (type: LogEntry["type"], message: string) => {
     const newLog: LogEntry = {
@@ -188,883 +134,190 @@ export default function Gpt9000DevicePage() {
     setLogs((prev) => [newLog, ...prev.slice(0, 9)]); // 최근 10개만 유지
   };
 
-  const addBarcodeLog = (type: LogEntry["type"], message: string) => {
-    const newLog: LogEntry = {
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message,
-    };
-    setBarcodeLogs((prev) => [newLog, ...prev.slice(0, 9)]); // 최근 10개만 유지
-  };
-
-  const addPowerMeterLog = (type: LogEntry["type"], message: string) => {
-    const newLog: LogEntry = {
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message,
-    };
-    setPowerMeterLogs((prev) => [newLog, ...prev.slice(0, 9)]); // 최근 10개만 유지
-  };
-
-  const addCommandLog = (type: LogEntry["type"], message: string) => {
-    const newLog: LogEntry = {
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message,
-    };
-    setCommandLogs((prev) => [newLog, ...prev.slice(0, 9)]); // 최근 10개만 유지
-  };
-
   // 공통 포트 로드 함수 (모든 장비가 공유)
-  const loadCommonPorts = async () => {
+  const loadCommonPorts = useCallback(async () => {
+    // 수동 포트 목록 (COM1~COM10) - 기본값으로 설정
+    const manualPorts: SerialPort[] = [
+      { name: "COM1", vendor: "수동 입력" },
+      { name: "COM2", vendor: "수동 입력" },
+      { name: "COM3", vendor: "수동 입력" },
+      { name: "COM4", vendor: "수동 입력" },
+      { name: "COM5", vendor: "수동 입력" },
+      { name: "COM6", vendor: "수동 입력" },
+      { name: "COM7", vendor: "수동 입력" },
+      { name: "COM8", vendor: "수동 입력" },
+      { name: "COM9", vendor: "수동 입력" },
+      { name: "COM10", vendor: "수동 입력" },
+    ];
+
     try {
-      // 시스템에서 감지된 포트 조회 (GPT-9000 API 사용)
-      const detectedPorts = (await apiClient.getGpt9000Ports()) as SerialPort[];
+      // 시스템에서 감지된 포트 조회 (안전시험기 API 사용)
+      const detectedPorts =
+        (await apiClient.getSafetyTesterPorts()) as SerialPort[];
 
-      // 수동 포트 목록 (COM1~COM10)
-      const manualPorts: SerialPort[] = [
-        { name: "COM1", vendor: "수동 입력" },
-        { name: "COM2", vendor: "수동 입력" },
-        { name: "COM3", vendor: "수동 입력" },
-        { name: "COM4", vendor: "수동 입력" },
-        { name: "COM5", vendor: "수동 입력" },
-        { name: "COM6", vendor: "수동 입력" },
-        { name: "COM7", vendor: "수동 입력" },
-        { name: "COM8", vendor: "수동 입력" },
-        { name: "COM9", vendor: "수동 입력" },
-        { name: "COM10", vendor: "수동 입력" },
-      ];
-
-      // 감지된 포트와 수동 포트 합치기 (중복 제거)
-      const allPorts = [...manualPorts];
-      detectedPorts.forEach((port: SerialPort) => {
-        const exists = allPorts.some((p) => p.name === port.name);
-        if (!exists) {
-          allPorts.push(port);
+      // 감지된 포트와 수동 포트 통합 (중복 제거)
+      const allPorts: SerialPort[] = [...detectedPorts];
+      manualPorts.forEach((manualPort) => {
+        if (!detectedPorts.some((port) => port.name === manualPort.name)) {
+          allPorts.push(manualPort);
         }
       });
 
       setCommonPorts(allPorts);
       addLog(
         "info",
-        `공통 포트 ${allPorts.length}개 준비됨 (감지: ${detectedPorts.length}개)`
+        `포트 ${allPorts.length}개 로드됨 (감지: ${detectedPorts.length}개, 수동: ${manualPorts.length}개)`
       );
     } catch (err) {
-      console.error("포트 조회 실패:", err);
-      // 에러 발생 시에도 수동 포트는 표시
-      const manualPorts: SerialPort[] = [
-        { name: "COM1", vendor: "수동 입력" },
-        { name: "COM2", vendor: "수동 입력" },
-        { name: "COM3", vendor: "수동 입력" },
-        { name: "COM4", vendor: "수동 입력" },
-        { name: "COM5", vendor: "수동 입력" },
-        { name: "COM6", vendor: "수동 입력" },
-        { name: "COM7", vendor: "수동 입력" },
-        { name: "COM8", vendor: "수동 입력" },
-        { name: "COM9", vendor: "수동 입력" },
-        { name: "COM10", vendor: "수동 입력" },
-      ];
+      console.error("포트 조회 오류:", err);
+      // 백엔드 연결 실패 시 수동 포트만 표시
       setCommonPorts(manualPorts);
-      addLog("error", "포트 조회 실패 - 수동 포트만 표시");
+      addLog("error", "포트 자동 감지 실패 - 수동 포트만 표시됩니다");
     }
-  };
+  }, []);
 
-  const loadInterfaceConfig = async () => {
+  // 등록된 설비 목록 로드
+  const loadRegisteredDevices = useCallback(async () => {
     try {
-      const config = (await apiClient.getGpt9000Interface()) as InterfaceConfig;
-      setInterfaceConfig(config);
-      addLog("info", `인터페이스 설정 로드됨: ${config.type}, ${config.baud}`);
+      const devices = (await apiClient.getDevices()) as Device[];
+      setRegisteredDevices(devices);
+      addLog("info", `등록된 설비 ${devices.length}개 로드됨`);
+      setError(null); // 성공 시 에러 초기화
     } catch (err) {
-      console.error("인터페이스 설정 조회 실패:", err);
+      console.error("설비 목록 조회 실패:", err);
+      const errorMsg = err instanceof Error ? err.message : "알 수 없는 오류";
+      if (errorMsg.includes("Failed to fetch")) {
+        setError(
+          "백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요. (http://localhost:8000)"
+        );
+        addLog("error", "백엔드 서버 연결 실패 - 서버 상태를 확인해주세요");
+      } else {
+        setError(`설비 목록 조회 실패: ${errorMsg}`);
+        addLog("error", "설비 목록 조회 실패");
+      }
     }
-  };
+  }, []);
 
-  // 전력 측정 설비 관련 함수들
-
-  const loadPowerMeterInterface = async () => {
-    try {
-      const config =
-        (await apiClient.getPowerMeterInterface()) as InterfaceConfig;
-      setPowerMeterInterface(config);
-      addPowerMeterLog(
-        "info",
-        `전력 측정 설비 인터페이스 설정 로드됨: ${config.type}, ${config.baud}`
-      );
-    } catch (err) {
-      console.error("전력 측정 설비 인터페이스 설정 조회 실패:", err);
-    }
-  };
-
-  const handleConnect = async () => {
-    if (!selectedPort) {
-      setError("포트를 선택해주세요");
+  // 새 설비 등록
+  const handleAddDevice = async () => {
+    if (!newDevice.name || !newDevice.port) {
+      setError("설비명과 포트는 필수 입력 항목입니다");
       return;
     }
 
     try {
       setIsLoading(true);
-      const result = (await apiClient.connectGpt9000Port(
-        selectedPort,
-        interfaceConfig.baud
-      )) as TestResponse;
+      await apiClient.createDevice(newDevice);
 
-      if (result.ok) {
-        setIsConnected(true);
-        setError(null);
-        addLog("success", `${selectedPort} 포트 연결 성공`);
-      } else {
-        setError(result.message || "연결 실패");
-        addLog("error", result.message || "연결 실패");
-      }
+      // 성공 후 목록 새로고침
+      await loadRegisteredDevices();
+
+      // 폼 초기화
+      setNewDevice({
+        name: "",
+        device_type: DeviceType.SAFETY_TESTER,
+        manufacturer: "",
+        model: "",
+        port: "",
+        baud_rate: 9600,
+        data_bits: 8,
+        stop_bits: 1,
+        parity: "None",
+        timeout: 5,
+      });
+
+      setIsAddDeviceOpen(false);
+      setError(null);
+      addLog("success", `새 설비 '${newDevice.name}' 등록됨`);
     } catch (err) {
-      setError("연결 중 오류가 발생했습니다");
-      addLog("error", "연결 오류");
-      console.error("연결 오류:", err);
+      setError("설비 등록 중 오류가 발생했습니다");
+      addLog("error", "설비 등록 실패");
+      console.error("설비 등록 오류:", err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDisconnect = async () => {
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.disconnectGpt9000Port()) as TestResponse;
-
-      if (result.ok) {
-        setIsConnected(false);
-        setError(null);
-        setRmtActive(false);
-        addLog("info", "연결 해제됨");
-      } else {
-        setError(result.message || "연결 해제 실패");
-      }
-    } catch (err) {
-      setError("연결 해제 중 오류가 발생했습니다");
-      console.error("연결 해제 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleTestConnection = async () => {
-    if (!selectedPort) {
-      setError("포트를 선택해주세요");
+  // 설비 삭제
+  const handleDeleteDevice = async (deviceId: number, deviceName: string) => {
+    if (!confirm(`정말로 '${deviceName}' 설비를 삭제하시겠습니까?`)) {
       return;
     }
 
     try {
       setIsLoading(true);
-      const result = (await apiClient.testGpt9000Idn(
-        selectedPort,
-        interfaceConfig.baud
-      )) as TestResponse;
-
-      if (result.ok && result.response) {
-        setLastIdnResponse(result.response);
-        setError(null);
-        // RMT 상태 감지 (예: 응답에서 원격 제어 상태 확인)
-        setRmtActive(result.response.includes("RMT"));
-        addLog("success", `연결 테스트 성공: ${result.response}`);
-      } else {
-        setError(result.message);
-        setLastIdnResponse("");
-        addLog("error", result.message);
-      }
+      await apiClient.deleteDevice(deviceId);
+      await loadRegisteredDevices();
+      addLog("success", `설비 '${deviceName}' 삭제됨`);
     } catch (err) {
-      setError("테스트 중 오류가 발생했습니다");
-      addLog("error", "테스트 실패");
-      console.error("테스트 오류:", err);
+      setError("설비 삭제 중 오류가 발생했습니다");
+      addLog("error", "설비 삭제 실패");
+      console.error("설비 삭제 오류:", err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleApplyInterfaceSettings = async () => {
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.setGpt9000Interface(
-        interfaceConfig.type,
-        interfaceConfig.baud
-      )) as TestResponse;
-
-      if (result.ok) {
-        setError(null);
-        addLog(
-          "success",
-          `인터페이스 설정 적용됨: ${interfaceConfig.type}, ${interfaceConfig.baud}`
-        );
-      } else {
-        setError(result.message || "설정 적용 실패");
-        addLog("error", result.message || "설정 적용 실패");
-      }
-    } catch (err) {
-      setError("설정 적용 중 오류가 발생했습니다");
-      console.error("설정 적용 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
+  // 설비 수정 시작
+  const handleEditDevice = (device: Device) => {
+    setEditingDevice({
+      id: device.id,
+      name: device.name,
+      device_type: device.device_type,
+      manufacturer: device.manufacturer || "",
+      model: device.model || "",
+      port: device.port,
+      baud_rate: device.baud_rate,
+      data_bits: device.data_bits,
+      stop_bits: device.stop_bits,
+      parity: device.parity,
+      timeout: device.timeout,
+    });
+    setIsEditDeviceOpen(true);
   };
 
-  // 전력 측정 설비 핸들러 함수들
-  const handlePowerMeterConnect = async () => {
-    if (!selectedPowerMeterPort) {
-      setError("전력 측정 설비 포트를 선택해주세요");
+  // 설비 수정 저장
+  const handleUpdateDevice = async () => {
+    if (!editingDevice || !editingDevice.name || !editingDevice.port) {
+      setError("설비명과 포트는 필수 입력 항목입니다");
       return;
     }
 
     try {
       setIsLoading(true);
-      const result = (await apiClient.connectPowerMeter(
-        selectedPowerMeterPort,
-        powerMeterInterface.baud
-      )) as TestResponse;
+      await apiClient.updateDevice(editingDevice.id, editingDevice);
 
-      if (result.ok) {
-        setPowerMeterConnected(true);
-        setError(null);
-        addPowerMeterLog("success", `${selectedPowerMeterPort} 포트 연결 성공`);
-      } else {
-        setError(result.message || "전력 측정 설비 연결 실패");
-        addPowerMeterLog("error", result.message || "연결 실패");
-      }
+      // 성공 후 목록 새로고침
+      await loadRegisteredDevices();
+
+      // 폼 초기화
+      setEditingDevice(null);
+      setIsEditDeviceOpen(false);
+      setError(null);
+      addLog("success", `설비 '${editingDevice.name}' 수정됨`);
     } catch (err) {
-      setError("전력 측정 설비 연결 중 오류가 발생했습니다");
-      addPowerMeterLog("error", "연결 오류");
-      console.error("전력 측정 설비 연결 오류:", err);
+      setError("설비 수정 중 오류가 발생했습니다");
+      addLog("error", "설비 수정 실패");
+      console.error("설비 수정 오류:", err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handlePowerMeterDisconnect = async () => {
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.disconnectPowerMeter()) as TestResponse;
-
-      if (result.ok) {
-        setPowerMeterConnected(false);
-        setError(null);
-        addPowerMeterLog("info", "전력 측정 설비 연결 해제됨");
-      } else {
-        setError(result.message || "전력 측정 설비 연결 해제 실패");
-      }
-    } catch (err) {
-      setError("전력 측정 설비 연결 해제 중 오류가 발생했습니다");
-      console.error("전력 측정 설비 연결 해제 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handlePowerMeterTest = async () => {
-    if (!selectedPowerMeterPort) {
-      setError("전력 측정 설비 포트를 선택해주세요");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.testPowerMeterIdn(
-        selectedPowerMeterPort,
-        powerMeterInterface.baud
-      )) as TestResponse;
-
-      if (result.ok && result.response) {
-        setLastPowerMeterResponse(result.response);
-        setError(null);
-        addPowerMeterLog(
-          "success",
-          `전력 측정 설비 연결 테스트 성공: ${result.response}`
-        );
-      } else {
-        setError(result.message);
-        setLastPowerMeterResponse("");
-        addPowerMeterLog("error", result.message);
-      }
-    } catch (err) {
-      setError("전력 측정 설비 테스트 중 오류가 발생했습니다");
-      addPowerMeterLog("error", "테스트 실패");
-      console.error("전력 측정 설비 테스트 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleApplyPowerMeterSettings = async () => {
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.setPowerMeterInterface(
-        powerMeterInterface.type,
-        powerMeterInterface.baud
-      )) as TestResponse;
-
-      if (result.ok) {
-        setError(null);
-        addPowerMeterLog(
-          "success",
-          `전력 측정 설비 인터페이스 설정 적용됨: ${powerMeterInterface.type}, ${powerMeterInterface.baud}`
-        );
-      } else {
-        setError(result.message || "전력 측정 설비 설정 적용 실패");
-        addPowerMeterLog("error", result.message || "설정 적용 실패");
-      }
-    } catch (err) {
-      setError("전력 측정 설비 설정 적용 중 오류가 발생했습니다");
-      console.error("전력 측정 설비 설정 적용 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // 명령어 관리 관련 함수들
-  const loadDeviceCommands = async (deviceId: string) => {
-    if (!deviceId) return;
-
-    try {
-      // Mock device ID - 실제로는 장비 선택에서 받아와야 함
-      const mockDeviceId = deviceId === "GPT-9000" ? 1 : 2;
-
-      addCommandLog("info", `장비 ID ${mockDeviceId}의 명령어 목록 로드 중...`);
-
-      // 실제 API 호출 (현재는 mock 데이터)
-      const mockCommands: DeviceCommand[] = deviceId === "GPT-9000" ? [
-        // 3대안전설비 (GPT-9000) 명령어들
-        {
-          id: 1,
-          name: "장비 식별",
-          category: "IDENTIFICATION",
-          command: "*IDN?",
-          description: "장비 식별 정보 조회 (IEEE 488.2)",
-          has_response: true,
-          response_pattern: "GPT-9801,MODEL-PE200,FW1.1.0,SN000001,RMT",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 1,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 2,
-          name: "시스템 오류 조회",
-          category: "STATUS",
-          command: "SYSTem:ERRor?",
-          description: "시스템 오류 상태 조회",
-          has_response: true,
-          response_pattern: "0,\"No error\"",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 2,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 3,
-          name: "측정값 조회",
-          category: "MEASUREMENT",
-          command: "MEASure?",
-          description: "현재 측정값 조회",
-          has_response: true,
-          response_pattern: ">ACW, PASS, 1.500kV, 0.050mA, T=005.0S, R=001.0S",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 3,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 4,
-          name: "수동/자동 모드 전환",
-          category: "CONTROL",
-          command: "MAIN:FUNCtion MANU",
-          description: "수동/자동 모드 전환",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 4,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 5,
-          name: "ACW 전압 설정",
-          category: "CONFIGURATION",
-          command: "MANU:ACW:VOLTage 1.5",
-          description: "AC 내전압 테스트 전압 설정 (0.05-5kV)",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 5,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 6,
-          name: "ACW 상한 전류 설정",
-          category: "CONFIGURATION",
-          command: "MANU:ACW:CHISet 1.0",
-          description: "AC 내전압 테스트 상한 전류 설정",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 6,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 7,
-          name: "DCW 전압 설정",
-          category: "CONFIGURATION",
-          command: "MANU:DCW:VOLTage 1.5",
-          description: "DC 내전압 테스트 전압 설정 (0.05-6kV)",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 7,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 8,
-          name: "IR 전압 설정",
-          category: "CONFIGURATION",
-          command: "MANU:IR:VOLTage 0.5",
-          description: "절연저항 테스트 전압 설정 (0.05-1kV)",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 8,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 9,
-          name: "GB 전류 설정",
-          category: "CONFIGURATION",
-          command: "MANU:GB:CURRent 10",
-          description: "접지연속성 테스트 전류 설정",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 9,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 10,
-          name: "부저 통과음 설정",
-          category: "CONFIGURATION",
-          command: "SYSTem:BUZZer:PSOUND ON",
-          description: "검사 통과 시 부저음 설정",
-          has_response: false,
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 10,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }
-      ] : [
-        // 전력측정설비 명령어들
-        {
-          id: 11,
-          name: "장비 식별",
-          category: "IDENTIFICATION",
-          command: "*IDN?",
-          description: "장비 식별 정보 조회",
-          has_response: true,
-          response_pattern: "PWR-EMU,MODEL-PE200,FW1.1.0,SN000001",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 1,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 12,
-          name: "전력 측정",
-          category: "MEASUREMENT",
-          command: "MEAS:POW?",
-          description: "순간 전력값 조회",
-          has_response: true,
-          response_pattern: "123.456W",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 2,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 13,
-          name: "전압 측정",
-          category: "MEASUREMENT",
-          command: "MEAS:VOLT?",
-          description: "RMS 전압값 조회",
-          has_response: true,
-          response_pattern: "220.03V",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 3,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 14,
-          name: "전류 측정",
-          category: "MEASUREMENT",
-          command: "MEAS:CURR?",
-          description: "RMS 전류값 조회",
-          has_response: true,
-          response_pattern: "0.561A",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 4,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 15,
-          name: "스트리밍 시작",
-          category: "STREAMING",
-          command: "CONF:STREAM ON",
-          description: "실시간 데이터 스트리밍 시작",
-          has_response: true,
-          response_pattern: "OK",
-          timeout: 5,
-          retry_count: 3,
-          is_active: true,
-          order_sequence: 5,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ];
-
-      const filteredCommands = mockCommands.filter(cmd => cmd.is_active);
-
-      setDeviceCommands(filteredCommands);
-      addCommandLog("success", `${filteredCommands.length}개 명령어 로드됨`);
-    } catch (error) {
-      addCommandLog("error", `명령어 로드 실패: ${error}`);
-    }
-  };
-
-  const executeCommand = async (commandId: number) => {
-    const command = deviceCommands.find(cmd => cmd.id === commandId);
-    if (!command) return;
-
-    addCommandLog("info", `명령어 실행 중: ${command.name}`);
-
-    try {
-      // 실제 API 호출 시뮬레이션
-      const mockResult: CommandExecutionResult = {
-        success: Math.random() > 0.3, // 70% 성공률
-        response_data: command.has_response ?
-          (command.response_pattern || "OK") + " (시뮬레이션)" : undefined,
-        error_message: Math.random() > 0.7 ? "연결 오류 시뮬레이션" : undefined,
-        execution_time: Math.random() * 2 + 0.5, // 0.5-2.5초
-        timestamp: new Date().toISOString(),
-      };
-
-      // 결과 저장
-      setCommandExecutionResults(prev => ({
-        ...prev,
-        [commandId]: mockResult
-      }));
-
-      if (mockResult.success) {
-        addCommandLog("success",
-          `${command.name} 실행 성공: ${mockResult.response_data || "OK"}`
-        );
-      } else {
-        addCommandLog("error",
-          `${command.name} 실행 실패: ${mockResult.error_message}`
-        );
-      }
-    } catch (error) {
-      addCommandLog("error", `명령어 실행 오류: ${error}`);
-    }
-  };
-
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case "IDENTIFICATION": return <QrCode className="h-4 w-4" />;
-      case "STATUS": return <Activity className="h-4 w-4" />;
-      case "CONTROL": return <Settings className="h-4 w-4" />;
-      case "MEASUREMENT": return <Power className="h-4 w-4" />;
-      case "CONFIGURATION": return <Settings className="h-4 w-4" />;
-      case "STREAMING": return <Terminal className="h-4 w-4" />;
-      default: return <Terminal className="h-4 w-4" />;
-    }
-  };
-
-  const getCategoryName = (category: string) => {
-    switch (category) {
-      case "IDENTIFICATION": return "식별";
-      case "STATUS": return "상태";
-      case "CONTROL": return "제어";
-      case "MEASUREMENT": return "측정";
-      case "CONFIGURATION": return "설정";
-      case "STREAMING": return "스트리밍";
-      default: return category;
-    }
-  };
-
-  // 바코드 스캐너 관련 함수들
-  const loadBarcodePorts = async () => {
-    try {
-      const data = (await apiClient.getBarcodePorts()) as {
-        ports: BarcodePort[];
-      };
-      setBarcodePorts(data.ports || []);
-      const detected =
-        data.ports?.filter((p: BarcodePort) => p.type === "detected").length ||
-        0;
-      const manual =
-        data.ports?.filter((p: BarcodePort) => p.type === "manual").length || 0;
-      addBarcodeLog(
-        "info",
-        `바코드 포트 ${
-          data.ports?.length || 0
-        }개 로드됨 (감지: ${detected}개, 수동: ${manual}개)`
-      );
-    } catch (err) {
-      console.error("바코드 포트 조회 실패:", err);
-      // 에러 발생 시에도 수동 포트는 표시
-      const manualPorts: BarcodePort[] = [
-        {
-          port: "COM1",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM2",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM3",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM4",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM5",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM6",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM7",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM8",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM9",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-        {
-          port: "COM10",
-          description: "수동 선택 포트",
-          hwid: "",
-          type: "manual",
-        },
-      ];
-      setBarcodePorts(manualPorts);
-      addBarcodeLog("error", "포트 조회 실패 - 수동 포트만 표시");
-    }
-  };
-
-  const handleBarcodeConnect = async () => {
-    if (!barcodeSettings.port) {
-      setError("바코드 스캐너 포트를 선택해주세요");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.connectBarcodeScanner(
-        barcodeSettings
-      )) as BarcodeTestResult;
-
-      if (result.success) {
-        setBarcodeConnected(true);
-        setError(null);
-        addBarcodeLog(
-          "success",
-          `바코드 스캐너 연결 성공: ${barcodeSettings.port}`
-        );
-      } else {
-        setError(result.message || "바코드 스캐너 연결 실패");
-        addBarcodeLog("error", result.message || "연결 실패");
-      }
-    } catch (err) {
-      setError("바코드 스캐너 연결 중 오류가 발생했습니다");
-      addBarcodeLog("error", "연결 오류");
-      console.error("바코드 연결 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleBarcodeDisconnect = () => {
-    setBarcodeConnected(false);
-    setBarcodeTestData("");
-    addBarcodeLog("info", "바코드 스캐너 연결 해제됨");
-  };
-
-  const handleBarcodeTest = async () => {
-    if (!barcodeSettings.port) {
-      setError("바코드 스캐너 포트를 선택해주세요");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      const result = (await apiClient.testBarcodeRead(
-        barcodeSettings
-      )) as BarcodeTestResult;
-
-      if (result.success) {
-        setBarcodeTestData(result.data || "");
-        setError(null);
-        addBarcodeLog("success", `바코드 읽기 성공: ${result.data}`);
-      } else {
-        setBarcodeTestData("");
-        setError(result.message);
-        addBarcodeLog("error", result.message);
-      }
-    } catch (err) {
-      setError("바코드 테스트 중 오류가 발생했습니다");
-      addBarcodeLog("error", "테스트 실패");
-      console.error("바코드 테스트 오류:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const getBarcodeConnectionBadge = () => {
-    if (barcodeConnected) {
-      return (
-        <Badge variant="default" className="bg-green-500 hover:bg-green-600">
-          <CheckCircle className="h-3 w-3 mr-1" />
-          연결됨
-        </Badge>
-      );
-    } else {
-      return (
-        <Badge variant="destructive">
-          <WifiOff className="h-3 w-3 mr-1" />
-          연결 끊김
-        </Badge>
-      );
-    }
-  };
-
-  const getPowerMeterConnectionBadge = () => {
-    if (powerMeterConnected) {
-      return (
-        <Badge variant="default" className="bg-green-500 hover:bg-green-600">
-          <CheckCircle className="h-3 w-3 mr-1" />
-          연결됨
-        </Badge>
-      );
-    } else {
-      return (
-        <Badge variant="destructive">
-          <WifiOff className="h-3 w-3 mr-1" />
-          연결 끊김
-        </Badge>
-      );
-    }
-  };
-
-  const getConnectionBadge = () => {
-    if (isConnected) {
-      return (
-        <Badge variant="default" className="bg-green-500 hover:bg-green-600">
-          <CheckCircle className="h-3 w-3 mr-1" />
-          연결됨
-        </Badge>
-      );
-    } else {
-      return (
-        <Badge variant="destructive">
-          <WifiOff className="h-3 w-3 mr-1" />
-          연결 끊김
-        </Badge>
-      );
-    }
-  };
-
-  const getInterfaceDescription = (type: string) => {
-    switch (type) {
-      case "USB":
-        return "USB는 가상 RS-232(CDC)로 동작. 장치관리자에서 COM 번호/보드레이트 확인 필요.";
-      case "RS232":
-        return "";
-      case "GPIB":
-        return "GPIB 인터페이스 (옵션)";
-      default:
-        return "";
-    }
-  };
+  useEffect(() => {
+    loadRegisteredDevices();
+    loadCommonPorts();
+  }, [loadRegisteredDevices, loadCommonPorts]);
 
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto p-6 space-y-8">
       {/* 헤더 */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">장비 관리</h1>
-          <p className="text-muted-foreground">
-            3대안전설비(GPT-9000), 전력측정설비, 바코드스캐너 통신 설정 및 연결
-            관리
+          <h1 className="text-3xl font-bold tracking-tight">장비 관리</h1>
+          <p className="text-muted-foreground mt-2">
+            측정 설비의 정보를 등록하고 통신 설정을 관리합니다
           </p>
-        </div>
-        <div className="flex items-center gap-4">
-          {rmtActive && (
-            <Badge
-              variant="outline"
-              className="text-orange-600 border-orange-600"
-            >
-              <Activity className="h-3 w-3 mr-1" />
-              RMT 원격제어 중
-            </Badge>
-          )}
         </div>
       </div>
 
@@ -1086,897 +339,518 @@ export default function Gpt9000DevicePage() {
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        {/* 3대안전설비 (GPT-9000 시리즈) 카드 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5" />
-              3대안전설비 (GPT-9000)
-            </CardTitle>
-            <CardDescription>
-              GPT-9801/9802/9803/9804 통신 설정 및 연결 관리
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">연결 상태</span>
-              {getConnectionBadge()}
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="port">COM 포트</Label>
-              <div className="flex gap-2">
-                <Select value={selectedPort} onValueChange={setSelectedPort}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="포트를 선택하세요" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    {commonPorts.map((port) => (
-                      <SelectItem
-                        key={port.name}
-                        value={port.name}
-                        className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Zap className="h-4 w-4 text-orange-600" />
-                          <span className="text-sm font-medium text-black">
-                            {port.name}
-                          </span>
-                          {port.vendor && (
-                            <span className="text-xs text-gray-500">
-                              - {port.vendor}
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={loadCommonPorts}
-                  disabled={isLoading}
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-                  />
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>인터페이스 타입</Label>
-              <Select
-                value={interfaceConfig.type}
-                onValueChange={(value: "USB" | "RS232" | "GPIB") =>
-                  setInterfaceConfig((prev) => ({ ...prev, type: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="USB">USB</SelectItem>
-                  <SelectItem value="RS232">RS-232</SelectItem>
-                  <SelectItem value="GPIB" disabled>
-                    GPIB (옵션)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                {getInterfaceDescription(interfaceConfig.type)}
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>보드레이트</Label>
-              <Select
-                value={interfaceConfig.baud.toString()}
-                onValueChange={(value) =>
-                  setInterfaceConfig((prev) => ({
-                    ...prev,
-                    baud: parseInt(value),
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {validBaudRates.map((rate) => (
-                    <SelectItem key={rate} value={rate.toString()}>
-                      {rate}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex gap-2">
-              {isConnected ? (
-                <Button
-                  variant="destructive"
-                  onClick={handleDisconnect}
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  연결 해제
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleConnect}
-                  disabled={isLoading || !selectedPort}
-                  className="flex-1"
-                >
-                  연결
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={handleTestConnection}
-                disabled={isLoading || !selectedPort}
-                title="*IDN? 테스트"
-              >
-                <Activity className="h-4 w-4 mr-1" />
-                테스트
-              </Button>
-            </div>
-
-            <Button
-              onClick={handleApplyInterfaceSettings}
-              disabled={isLoading}
-              className="w-full"
-              variant="outline"
-            >
-              설정 적용
-            </Button>
-
-            {/* 테스트 결과 */}
-            {lastIdnResponse && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                <p className="text-sm font-medium text-green-800">
-                  3대안전설비 응답:
-                </p>
-                <p className="text-sm text-green-600 font-mono mt-1">
-                  {lastIdnResponse}
-                </p>
-              </div>
-            )}
-
-            {/* 로그 뷰어 */}
-            <div className="space-y-2">
-              <Label className="text-sm">3대안전설비 로그</Label>
-              <div className="h-24 p-2 bg-gray-50 border rounded-md overflow-y-auto text-sm">
-                {logs.map((log, index) => (
-                  <div
-                    key={index}
-                    className={`flex gap-2 text-xs ${
-                      log.type === "error"
-                        ? "text-red-600"
-                        : log.type === "success"
-                        ? "text-green-600"
-                        : "text-gray-600"
-                    }`}
-                  >
-                    <span className="text-gray-400">{log.timestamp}</span>
-                    <span>{log.message}</span>
-                  </div>
-                ))}
-                {logs.length === 0 && (
-                  <p className="text-gray-400 text-xs">로그가 없습니다</p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 전력 측정 설비 카드 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Power className="h-5 w-5" />
-              전력 측정 설비
-            </CardTitle>
-            <CardDescription>
-              전력 측정 설비 연결 설정 및 통신 관리
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">연결 상태</span>
-              {getPowerMeterConnectionBadge()}
-            </div>
-
-            <div className="space-y-2">
-              <Label>COM 포트</Label>
-              <div className="flex gap-2">
-                <Select
-                  value={selectedPowerMeterPort}
-                  onValueChange={setSelectedPowerMeterPort}
-                >
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="전력 측정 포트 선택" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    {commonPorts.map((port) => (
-                      <SelectItem
-                        key={port.name}
-                        value={port.name}
-                        className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Power className="h-4 w-4 text-blue-600" />
-                          <span className="text-sm font-medium text-black">
-                            {port.name}
-                          </span>
-                          {port.vendor && (
-                            <span className="text-xs text-gray-500">
-                              - {port.vendor}
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={loadCommonPorts}
-                  disabled={isLoading}
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-                  />
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>인터페이스 타입</Label>
-              <Select
-                value={powerMeterInterface.type}
-                onValueChange={(value: "USB" | "RS232" | "GPIB") =>
-                  setPowerMeterInterface((prev) => ({ ...prev, type: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="USB">USB</SelectItem>
-                  <SelectItem value="RS232">RS-232</SelectItem>
-                  <SelectItem value="GPIB" disabled>
-                    GPIB (옵션)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>보드레이트</Label>
-              <Select
-                value={powerMeterInterface.baud.toString()}
-                onValueChange={(value) =>
-                  setPowerMeterInterface((prev) => ({
-                    ...prev,
-                    baud: parseInt(value),
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {validBaudRates.map((rate) => (
-                    <SelectItem key={rate} value={rate.toString()}>
-                      {rate}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex gap-2">
-              {powerMeterConnected ? (
-                <Button
-                  variant="destructive"
-                  onClick={handlePowerMeterDisconnect}
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  연결 해제
-                </Button>
-              ) : (
-                <Button
-                  onClick={handlePowerMeterConnect}
-                  disabled={isLoading || !selectedPowerMeterPort}
-                  className="flex-1"
-                >
-                  연결
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={handlePowerMeterTest}
-                disabled={isLoading || !selectedPowerMeterPort}
-                title="*IDN? 테스트"
-              >
-                <Activity className="h-4 w-4 mr-1" />
-                테스트
-              </Button>
-            </div>
-
-            <Button
-              onClick={handleApplyPowerMeterSettings}
-              disabled={isLoading}
-              className="w-full"
-              variant="outline"
-            >
-              설정 적용
-            </Button>
-
-            {/* 전력 측정 설비 테스트 결과 */}
-            {lastPowerMeterResponse && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-md">
-                <p className="text-sm font-medium text-green-800">
-                  전력 측정 설비 응답:
-                </p>
-                <p className="text-sm text-green-600 font-mono mt-1">
-                  {lastPowerMeterResponse}
-                </p>
-              </div>
-            )}
-
-            {/* 전력 측정 설비 로그 */}
-            <div className="space-y-2">
-              <Label className="text-sm">전력 측정 설비 로그</Label>
-              <div className="h-24 p-2 bg-gray-50 border rounded-md overflow-y-auto text-sm">
-                {powerMeterLogs.map((log, index) => (
-                  <div
-                    key={index}
-                    className={`flex gap-2 text-xs ${
-                      log.type === "error"
-                        ? "text-red-600"
-                        : log.type === "success"
-                        ? "text-green-600"
-                        : "text-gray-600"
-                    }`}
-                  >
-                    <span className="text-gray-400">{log.timestamp}</span>
-                    <span>{log.message}</span>
-                  </div>
-                ))}
-                {powerMeterLogs.length === 0 && (
-                  <p className="text-gray-400 text-xs">로그가 없습니다</p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 바코드 스캐너 설정 카드 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <QrCode className="h-5 w-5" />
-              바코드 스캐너
-            </CardTitle>
-            <CardDescription>
-              시리얼 통신 바코드 스캐너 연결 설정
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">연결 상태</span>
-              {getBarcodeConnectionBadge()}
-            </div>
-
-            <div className="space-y-2">
-              <Label>COM 포트</Label>
-              <div className="flex gap-2">
-                <Select
-                  value={barcodeSettings.port}
-                  onValueChange={(value) =>
-                    setBarcodeSettings((prev) => ({ ...prev, port: value }))
-                  }
-                >
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="바코드 포트 선택" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    {barcodePorts.map((port) => (
-                      <SelectItem
-                        key={port.port}
-                        value={port.port}
-                        className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                      >
-                        <div className="flex items-center gap-2">
-                          {port.type === "detected" ? (
-                            <Scan className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <Scan className="h-4 w-4 text-gray-400" />
-                          )}
-                          <span className="text-sm font-medium text-black">
-                            {port.port}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            - {port.type === "detected" ? "감지됨" : "수동"}
-                          </span>
-                          {port.description && port.type === "detected" && (
-                            <span className="text-xs text-gray-400">
-                              ({port.description})
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={loadBarcodePorts}
-                  disabled={isLoading}
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-                  />
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-sm">보드레이트</Label>
-                <Select
-                  value={barcodeSettings.baudrate.toString()}
-                  onValueChange={(value) =>
-                    setBarcodeSettings((prev) => ({
-                      ...prev,
-                      baudrate: parseInt(value),
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    {validBaudRates.map((rate) => (
-                      <SelectItem
-                        key={rate}
-                        value={rate.toString()}
-                        className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                      >
-                        {rate}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-sm">패리티</Label>
-                <Select
-                  value={barcodeSettings.parity}
-                  onValueChange={(value: "N" | "E" | "O") =>
-                    setBarcodeSettings((prev) => ({ ...prev, parity: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    <SelectItem
-                      value="N"
-                      className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                    >
-                      None
-                    </SelectItem>
-                    <SelectItem
-                      value="E"
-                      className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                    >
-                      Even
-                    </SelectItem>
-                    <SelectItem
-                      value="O"
-                      className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                    >
-                      Odd
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              {barcodeConnected ? (
-                <Button
-                  variant="destructive"
-                  onClick={handleBarcodeDisconnect}
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  연결 해제
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleBarcodeConnect}
-                  disabled={isLoading || !barcodeSettings.port}
-                  className="flex-1"
-                >
-                  연결
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={handleBarcodeTest}
-                disabled={isLoading || !barcodeSettings.port}
-                title="바코드 읽기 테스트"
-              >
-                <Scan className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <Button
-              onClick={() => {
-                // 바코드 설정 적용 로직 (현재는 단순히 로그만 추가)
-                addBarcodeLog("success", "바코드 스캐너 설정이 적용되었습니다");
-              }}
-              disabled={isLoading}
-              className="w-full"
-              variant="outline"
-            >
-              설정 적용
-            </Button>
-
-            {/* 바코드 테스트 결과 */}
-            {barcodeTestData && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md">
-                <p className="text-sm font-medium text-blue-800">
-                  바코드 데이터:
-                </p>
-                <p className="text-sm text-blue-600 font-mono mt-1 break-all">
-                  {barcodeTestData}
-                </p>
-              </div>
-            )}
-
-            {/* 바코드 로그 */}
-            <div className="space-y-2">
-              <Label className="text-sm">바코드 로그</Label>
-              <div className="h-24 p-2 bg-gray-50 border rounded-md overflow-y-auto text-sm">
-                {barcodeLogs.map((log, index) => (
-                  <div
-                    key={index}
-                    className={`flex gap-2 text-xs ${
-                      log.type === "error"
-                        ? "text-red-600"
-                        : log.type === "success"
-                        ? "text-green-600"
-                        : "text-gray-600"
-                    }`}
-                  >
-                    <span className="text-gray-400">{log.timestamp}</span>
-                    <span>{log.message}</span>
-                  </div>
-                ))}
-                {barcodeLogs.length === 0 && (
-                  <p className="text-gray-400 text-xs">로그가 없습니다</p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* 현재 상태 요약 */}
-      <Card>
+      {/* 설비 등록 섹션 */}
+      <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle>현재 상태 요약</CardTitle>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-2xl">설비 등록</CardTitle>
+              <CardDescription className="text-base">
+                새로운 측정 설비를 등록합니다
+              </CardDescription>
+            </div>
+            <Button
+              onClick={() => setIsAddDeviceOpen(true)}
+              className="bg-primary hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4 mr-2" />새 설비 추가
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {/* 3대안전설비 상태 */}
-            <div>
-              <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <Zap className="h-4 w-4" />
-                3대안전설비 (GPT-9000)
-              </h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          {/* 새 설비 등록 폼 */}
+          {isAddDeviceOpen && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-gray-800 dark:to-gray-900 rounded-xl p-6 border-2 border-dashed border-blue-200 dark:border-gray-700 space-y-6">
+              <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-muted-foreground">인터페이스:</span>
-                  <Badge variant="outline" className="ml-2">
-                    {interfaceConfig.type}
-                  </Badge>
+                  <h3 className="text-xl font-semibold text-blue-900 dark:text-blue-100">
+                    새 설비 등록
+                  </h3>
+                  <p className="text-blue-700 dark:text-blue-300 text-sm mt-1">
+                    설비 정보를 입력하여 새로운 장비를 등록하세요
+                  </p>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">보드레이트:</span>
-                  <span className="ml-2 font-mono">{interfaceConfig.baud}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">포트:</span>
-                  <span className="ml-2 font-mono">
-                    {selectedPort || "미선택"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">연결 상태:</span>
-                  <span className="ml-2">{getConnectionBadge()}</span>
-                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsAddDeviceOpen(false)}
+                  className="hover:bg-blue-100 dark:hover:bg-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-            </div>
 
-            {/* 전력 측정 설비 상태 */}
-            <div className="border-t pt-4">
-              <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <Power className="h-4 w-4" />
-                전력 측정 설비
-              </h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">인터페이스:</span>
-                  <Badge variant="outline" className="ml-2">
-                    {powerMeterInterface.type}
-                  </Badge>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>설비명 *</Label>
+                  <Input
+                    value={newDevice.name}
+                    onChange={(e) =>
+                      setNewDevice((prev) => ({
+                        ...prev,
+                        name: e.target.value,
+                      }))
+                    }
+                    placeholder="예: GPT-9000 안전시험기"
+                  />
                 </div>
-                <div>
-                  <span className="text-muted-foreground">보드레이트:</span>
-                  <span className="ml-2 font-mono">
-                    {powerMeterInterface.baud}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">포트:</span>
-                  <span className="ml-2 font-mono">
-                    {selectedPowerMeterPort || "미선택"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">연결 상태:</span>
-                  <span className="ml-2">{getPowerMeterConnectionBadge()}</span>
-                </div>
-              </div>
-            </div>
 
-            {/* 바코드 스캐너 상태 */}
-            <div className="border-t pt-4">
-              <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <QrCode className="h-4 w-4" />
-                바코드 스캐너
-              </h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">포트:</span>
-                  <span className="ml-2 font-mono">
-                    {barcodeSettings.port || "미선택"}
-                  </span>
+                <div className="space-y-2">
+                  <Label>설비 유형 *</Label>
+                  <Select
+                    value={newDevice.device_type}
+                    onValueChange={(value) =>
+                      setNewDevice((prev) => ({
+                        ...prev,
+                        device_type: value as DeviceType,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={DeviceType.SAFETY_TESTER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.SAFETY_TESTER]}
+                      </SelectItem>
+                      <SelectItem value={DeviceType.POWER_METER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.POWER_METER]}
+                      </SelectItem>
+                      <SelectItem value={DeviceType.BARCODE_SCANNER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.BARCODE_SCANNER]}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">보드레이트:</span>
-                  <span className="ml-2 font-mono">
-                    {barcodeSettings.baudrate}
-                  </span>
+
+                <div className="space-y-2">
+                  <Label>포트 *</Label>
+                  <Select
+                    value={newDevice.port}
+                    onValueChange={(value) =>
+                      setNewDevice((prev) => ({ ...prev, port: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="포트 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {commonPorts.map((port) => (
+                        <SelectItem key={port.name} value={port.name}>
+                          {port.name} ({port.vendor})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">설정:</span>
-                  <span className="ml-2 font-mono">
-                    {barcodeSettings.data_bits}-{barcodeSettings.parity}-
-                    {barcodeSettings.stop_bits}
-                  </span>
+
+                <div className="space-y-2">
+                  <Label>제조사</Label>
+                  <Input
+                    value={newDevice.manufacturer}
+                    onChange={(e) =>
+                      setNewDevice((prev) => ({
+                        ...prev,
+                        manufacturer: e.target.value,
+                      }))
+                    }
+                    placeholder="예: GPT"
+                  />
                 </div>
-                <div>
-                  <span className="text-muted-foreground">연결 상태:</span>
-                  <span className="ml-2">{getBarcodeConnectionBadge()}</span>
+
+                <div className="space-y-2">
+                  <Label>모델</Label>
+                  <Input
+                    value={newDevice.model}
+                    onChange={(e) =>
+                      setNewDevice((prev) => ({
+                        ...prev,
+                        model: e.target.value,
+                      }))
+                    }
+                    placeholder="예: GPT-9000"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>보드레이트</Label>
+                  <Select
+                    value={newDevice.baud_rate.toString()}
+                    onValueChange={(value) =>
+                      setNewDevice((prev) => ({
+                        ...prev,
+                        baud_rate: parseInt(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {validBaudRates.map((rate) => (
+                        <SelectItem key={rate} value={rate.toString()}>
+                          {rate}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
+
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setIsAddDeviceOpen(false)}
+                >
+                  취소
+                </Button>
+                <Button onClick={handleAddDevice} disabled={isLoading}>
+                  <Save className="h-4 w-4 mr-2" />
+                  {isLoading ? "저장 중..." : "등록"}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* SCPI 명령어 관리 섹션 */}
-      <Card>
+      {/* 설비 수정 섹션 */}
+      {isEditDeviceOpen && editingDevice && (
+        <Card className="shadow-lg border-orange-200 dark:border-orange-800">
+          <CardHeader className="bg-orange-50 dark:bg-orange-950">
+            <CardTitle className="text-2xl flex items-center gap-2">
+              <Edit className="h-6 w-6 text-orange-600" />
+              설비 수정
+            </CardTitle>
+            <CardDescription className="text-base">
+              선택된 설비의 정보를 수정합니다
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="bg-gradient-to-r from-orange-50 to-yellow-50 dark:from-gray-800 dark:to-gray-900 rounded-xl p-6 border-2 border-dashed border-orange-200 dark:border-gray-700 space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold text-orange-900 dark:text-orange-100">
+                    설비 정보 수정
+                  </h3>
+                  <p className="text-orange-700 dark:text-orange-300 text-sm mt-1">
+                    수정할 정보를 입력하세요
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIsEditDeviceOpen(false);
+                    setEditingDevice(null);
+                  }}
+                  className="hover:bg-orange-100 dark:hover:bg-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>설비명 *</Label>
+                  <Input
+                    value={editingDevice?.name || ""}
+                    onChange={(e) =>
+                      setEditingDevice((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              name: e.target.value,
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="예: GPT-9000 안전시험기"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>설비 유형 *</Label>
+                  <Select
+                    value={
+                      editingDevice?.device_type || DeviceType.SAFETY_TESTER
+                    }
+                    onValueChange={(value) =>
+                      setEditingDevice((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              device_type: value as DeviceType,
+                            }
+                          : null
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={DeviceType.SAFETY_TESTER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.SAFETY_TESTER]}
+                      </SelectItem>
+                      <SelectItem value={DeviceType.POWER_METER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.POWER_METER]}
+                      </SelectItem>
+                      <SelectItem value={DeviceType.BARCODE_SCANNER}>
+                        {DEVICE_TYPE_LABELS[DeviceType.BARCODE_SCANNER]}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>포트 *</Label>
+                  <Select
+                    value={editingDevice?.port || ""}
+                    onValueChange={(value) =>
+                      setEditingDevice((prev) =>
+                        prev ? { ...prev, port: value } : null
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="포트 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {commonPorts.map((port) => (
+                        <SelectItem key={port.name} value={port.name}>
+                          {port.name} ({port.vendor})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>제조사</Label>
+                  <Input
+                    value={editingDevice?.manufacturer || ""}
+                    onChange={(e) =>
+                      setEditingDevice((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              manufacturer: e.target.value,
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="예: GPT"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>모델</Label>
+                  <Input
+                    value={editingDevice?.model || ""}
+                    onChange={(e) =>
+                      setEditingDevice((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              model: e.target.value,
+                            }
+                          : null
+                      )
+                    }
+                    placeholder="예: GPT-9000"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>보드레이트</Label>
+                  <Select
+                    value={editingDevice?.baud_rate.toString() || "9600"}
+                    onValueChange={(value) =>
+                      setEditingDevice((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              baud_rate: parseInt(value),
+                            }
+                          : null
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {validBaudRates.map((rate) => (
+                        <SelectItem key={rate} value={rate.toString()}>
+                          {rate}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsEditDeviceOpen(false);
+                    setEditingDevice(null);
+                  }}
+                >
+                  취소
+                </Button>
+                <Button
+                  onClick={handleUpdateDevice}
+                  disabled={isLoading}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {isLoading ? "저장 중..." : "수정 완료"}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 등록된 설비 목록 섹션 */}
+      <Card className="shadow-lg">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Terminal className="h-5 w-5" />
-            SCPI 명령어 관리
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowCommandManager(!showCommandManager)}
-              className="ml-auto"
-            >
-              {showCommandManager ? "숨기기" : "보기"}
-            </Button>
+          <CardTitle className="text-2xl flex items-center gap-2">
+            <Settings className="h-6 w-6 text-blue-600" />
+            등록된 설비 ({registeredDevices.length}개)
           </CardTitle>
-          <CardDescription>
-            장비별 SCPI(Standard Commands for Programmable Instruments) 명령어를 등록하고 실행할 수 있습니다
+          <CardDescription className="text-base">
+            현재 시스템에 등록된 측정 설비 목록을 확인하고 관리하세요
           </CardDescription>
         </CardHeader>
-        {showCommandManager && (
-          <CardContent className="space-y-4">
-            {/* 장비 선택 */}
-            <div className="space-y-2">
-              <Label>장비 선택</Label>
-              <Select
-                value={selectedDeviceForCommands}
-                onValueChange={(value) => {
-                  setSelectedDeviceForCommands(value);
-                  loadDeviceCommands(value);
-                }}
+        <CardContent>
+          {registeredDevices.length === 0 ? (
+            <div className="text-center py-16">
+              <Settings className="h-16 w-16 mx-auto text-gray-300 mb-4" />
+              <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                등록된 설비가 없습니다
+              </h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                새로운 측정 설비를 추가하여 시작하세요
+              </p>
+              <Button
+                onClick={() => setIsAddDeviceOpen(true)}
+                variant="outline"
+                className="border-dashed"
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="명령어를 관리할 장비를 선택하세요" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="GPT-9000">3대안전설비 (GPT-9000)</SelectItem>
-                  <SelectItem value="전력측정설비">전력측정설비</SelectItem>
-                </SelectContent>
-              </Select>
+                <Plus className="h-4 w-4 mr-2" />첫 설비 추가하기
+              </Button>
             </div>
-
-            {selectedDeviceForCommands && (
-              <>
-                {/* 명령어 목록 */}
-                <div className="space-y-3">
+          ) : (
+            <div className="space-y-3">
+              {registeredDevices.map((device) => (
+                <div
+                  key={device.id}
+                  className="bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md transition-shadow"
+                >
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">등록된 명령어</Label>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => loadDeviceCommands(selectedDeviceForCommands)}
+                    <div className="flex items-center gap-4">
+                      {device.device_type === "SAFETY_TESTER" ? (
+                        <Zap className="h-4 w-4 text-orange-500" />
+                      ) : device.device_type === "POWER_METER" ? (
+                        <Power className="h-4 w-4 text-blue-500" />
+                      ) : (
+                        <QrCode className="h-4 w-4 text-green-500" />
+                      )}
+                      <span className="font-medium">{device.name}</span>
+                      <Badge variant="outline">
+                        {DEVICE_TYPE_LABELS[device.device_type as DeviceType] ||
+                          device.device_type}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {device.manufacturer && device.model
+                          ? `${device.manufacturer} ${device.model}`
+                          : device.manufacturer || device.model || ""}
+                      </span>
+                      <span className="text-sm text-muted-foreground">
+                        {device.port} ({device.baud_rate})
+                      </span>
+                      <Badge
+                        variant={
+                          device.connection_status === "CONNECTED"
+                            ? "default"
+                            : "secondary"
+                        }
                       >
-                        <RefreshCw className="h-4 w-4 mr-1" />
-                        새로고침
+                        {device.connection_status === "CONNECTED"
+                          ? "연결됨"
+                          : "연결 안됨"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleEditDevice(device)}
+                      >
+                        <Edit className="h-3 w-3" />
                       </Button>
-                      <Button variant="outline" size="sm">
-                        <Plus className="h-4 w-4 mr-1" />
-                        명령어 추가
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          handleDeleteDevice(device.id, device.name)
+                        }
+                      >
+                        <Trash2 className="h-3 w-3" />
                       </Button>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-1 gap-3">
-                    {deviceCommands.map((command) => {
-                      const result = commandExecutionResults[command.id];
-                      return (
-                        <div
-                          key={command.id}
-                          className="border rounded-lg p-3 space-y-2"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {getCategoryIcon(command.category)}
-                              <span className="font-medium">{command.name}</span>
-                              <Badge variant="outline" className="text-xs">
-                                {getCategoryName(command.category)}
-                              </Badge>
-                              {!command.is_active && (
-                                <Badge variant="secondary" className="text-xs">
-                                  비활성
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => executeCommand(command.id)}
-                                disabled={!command.is_active || isLoading}
-                              >
-                                <Play className="h-3 w-3 mr-1" />
-                                실행
-                              </Button>
-                              <Button variant="ghost" size="sm">
-                                <Edit className="h-3 w-3" />
-                              </Button>
-                              <Button variant="ghost" size="sm">
-                                <Copy className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-
-                          <div className="text-sm text-gray-600">
-                            <div className="flex items-center gap-4">
-                              <span className="font-mono bg-gray-100 px-2 py-1 rounded">
-                                {command.command}
-                              </span>
-                              {command.has_response && (
-                                <span className="text-xs text-gray-500">
-                                  응답: {command.response_pattern}
-                                </span>
-                              )}
-                            </div>
-                            {command.description && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                {command.description}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* 실행 결과 */}
-                          {result && (
-                            <div
-                              className={`p-2 rounded text-sm ${
-                                result.success
-                                  ? "bg-green-50 border border-green-200"
-                                  : "bg-red-50 border border-red-200"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span
-                                  className={`font-medium ${
-                                    result.success ? "text-green-800" : "text-red-800"
-                                  }`}
-                                >
-                                  {result.success ? "✓ 실행 성공" : "✗ 실행 실패"}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                  {result.execution_time.toFixed(2)}초
-                                </span>
-                              </div>
-                              {result.response_data && (
-                                <div
-                                  className={`mt-1 font-mono text-xs ${
-                                    result.success ? "text-green-600" : "text-red-600"
-                                  }`}
-                                >
-                                  응답: {result.response_data}
-                                </div>
-                              )}
-                              {result.error_message && (
-                                <div className="mt-1 text-xs text-red-600">
-                                  오류: {result.error_message}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {deviceCommands.length === 0 && (
-                      <div className="text-center py-8 text-gray-500">
-                        <Terminal className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                        <p>등록된 명령어가 없습니다</p>
-                        <p className="text-sm">명령어를 추가해보세요</p>
-                      </div>
-                    )}
-                  </div>
                 </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-                {/* 명령어 실행 로그 */}
-                <div className="space-y-2">
-                  <Label className="text-sm">명령어 실행 로그</Label>
-                  <div className="h-32 p-2 bg-gray-50 border rounded-md overflow-y-auto text-sm">
-                    {commandLogs.map((log, index) => (
-                      <div
-                        key={index}
-                        className={`flex gap-2 text-xs ${
-                          log.type === "error"
-                            ? "text-red-600"
-                            : log.type === "success"
-                            ? "text-green-600"
-                            : "text-gray-600"
-                        }`}
-                      >
-                        <span className="text-gray-400">{log.timestamp}</span>
-                        <span>{log.message}</span>
-                      </div>
-                    ))}
-                    {commandLogs.length === 0 && (
-                      <p className="text-gray-400 text-xs">로그가 없습니다</p>
-                    )}
-                  </div>
-                </div>
-              </>
+      {/* 활동 로그 섹션 */}
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="text-2xl flex items-center gap-2">
+            <Activity className="h-6 w-6 text-green-600" />
+            활동 로그
+          </CardTitle>
+          <CardDescription className="text-base">
+            설비 관리와 관련된 최근 활동 내역을 확인하세요
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 h-40 overflow-y-auto border-2 border-dashed border-gray-200 dark:border-gray-700">
+            {logs.map((log, index) => (
+              <div
+                key={index}
+                className={`flex gap-2 text-sm ${
+                  log.type === "error"
+                    ? "text-red-600"
+                    : log.type === "success"
+                    ? "text-green-600"
+                    : "text-muted-foreground"
+                }`}
+              >
+                <span className="text-xs text-muted-foreground min-w-[60px]">
+                  {log.timestamp}
+                </span>
+                <span>{log.message}</span>
+              </div>
+            ))}
+            {logs.length === 0 && (
+              <div className="text-center py-8">
+                <Terminal className="h-12 w-12 mx-auto text-gray-300 mb-2" />
+                <p className="text-muted-foreground text-sm">
+                  활동 로그가 없습니다
+                </p>
+              </div>
             )}
-          </CardContent>
-        )}
+          </div>
+        </CardContent>
       </Card>
     </div>
   );

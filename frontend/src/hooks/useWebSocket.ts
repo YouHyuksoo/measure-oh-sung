@@ -23,8 +23,9 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 3;
-  const reconnectDelay = 5000;
+  const maxReconnectAttempts = 5; // 재시도 횟수 증가
+  const reconnectDelay = 3000; // 재시도 간격 단축
+  const isManualDisconnectRef = useRef(false); // 수동 연결 해제 여부
 
   const connect = useCallback(() => {
     try {
@@ -51,8 +52,9 @@ export function useWebSocket(url: string): UseWebSocketReturn {
         setIsConnected(false);
         setSocket(null);
 
-        // 자동 재연결 시도 (정상 종료가 아닌 경우만)
+        // 수동 연결 해제가 아닌 경우에만 재연결 시도
         if (
+          !isManualDisconnectRef.current &&
           event.code !== 1000 &&
           reconnectAttemptsRef.current < maxReconnectAttempts
         ) {
@@ -64,7 +66,7 @@ export function useWebSocket(url: string): UseWebSocketReturn {
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, reconnectDelay);
-        } else if (event.code !== 1000) {
+        } else if (event.code !== 1000 && !isManualDisconnectRef.current) {
           console.error("WebSocket 최대 재연결 시도 횟수 초과");
         }
       };
@@ -77,6 +79,18 @@ export function useWebSocket(url: string): UseWebSocketReturn {
             "백엔드 서버가 실행 중인지 확인하세요 (http://localhost:8000)",
         });
         setIsConnected(false);
+
+        // 연결 오류 시 재연결 시도하지 않음 (무한 루프 방지)
+        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+          reconnectAttemptsRef.current++;
+          console.log(
+            `WebSocket 오류로 인한 재연결 시도 ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`
+          );
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, reconnectDelay * 2); // 오류 시 더 긴 대기 시간
+        }
       };
 
       setSocket(ws);
@@ -87,6 +101,8 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   }, [url]);
 
   const disconnect = useCallback(() => {
+    isManualDisconnectRef.current = true; // 수동 연결 해제 표시
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
@@ -118,13 +134,14 @@ export function useWebSocket(url: string): UseWebSocketReturn {
   useEffect(() => {
     // 컴포넌트 마운트 시에만 연결 시도
     if (!socket && !isConnected) {
+      isManualDisconnectRef.current = false; // 연결 시도 시 수동 해제 플래그 리셋
       connect();
     }
 
     return () => {
       disconnect();
     };
-  }, [url]); // url이 변경될 때만 재연결
+  }, [url, connect, disconnect, isConnected, socket]); // url이 변경될 때만 재연결
 
   return {
     socket,

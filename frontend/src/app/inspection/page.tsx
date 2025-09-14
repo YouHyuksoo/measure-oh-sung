@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Card,
   CardContent,
@@ -34,10 +34,23 @@ import {
   Terminal,
   Settings,
   Power,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { useInspection } from "@/hooks/useInspection";
 import { apiClient } from "@/lib/api";
 import { PhaseChart } from "@/components/charts/PhaseChart";
+import {
+  useBarcodeStore,
+  selectBarcodeScanner,
+  selectConnectionStatus,
+} from "@/stores/useBarcodeStore";
+import {
+  useDeviceStore,
+  selectDeviceConnectionStatus,
+  selectConnectionDebugInfo,
+  DeviceInfo,
+} from "@/stores/useDeviceStore";
 
 interface InspectionModel {
   id: number;
@@ -94,16 +107,54 @@ export default function InspectionPage() {
     isLoading,
     error,
     wsConnected,
+    inspectionWsConnected,
+    barcodeWsConnected,
     startListening,
-    processBarcodeScann,
+    processBarcodeScan,
     stopInspection,
     refreshStatus,
     clearError,
     setBarcodeCallback,
+    sendInspectionMessage,
+    sendBarcodeMessage,
   } = useInspection();
 
-  const [barcode, setBarcode] = useState("");
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
+  // Zustand 스토어 사용
+  const {
+    currentBarcode: barcode,
+    setCurrentBarcode: setBarcode,
+    selectedModelId,
+    setSelectedModelId,
+    lastScannedBarcode,
+    setLastScannedBarcode,
+    isListening: barcodeListening,
+    setListening: setBarcodeListening,
+    port: barcodePort,
+    setPort: setBarcodePort,
+    scanCount,
+    connectionStatus: barcodeConnectionStatus,
+    setConnectionStatus: setBarcodeConnectionStatus,
+    connectionError: barcodeConnectionError,
+    setConnectionError: setBarcodeConnectionError,
+    setInitialized: setBarcodeInitialized,
+  } = useBarcodeStore();
+
+  // 디바이스 연결 상태 관리
+  const {
+    deviceConnectionStatus,
+    setDeviceConnectionStatus,
+    connectionError,
+    setConnectionError,
+    connectedDevices,
+    setConnectedDevices,
+    connectionDebugInfo,
+    setConnectionDebugInfo,
+    updateApiResponse,
+    retryCount,
+    incrementRetryCount,
+    resetRetryCount,
+    maxRetries,
+  } = useDeviceStore();
   const [inspectionModels, setInspectionModels] = useState<InspectionModel[]>(
     []
   );
@@ -136,15 +187,10 @@ export default function InspectionPage() {
     autoInspectionRef.current = autoInspection;
   }, [autoInspection]);
 
-  // 바코드 스캐너 관련 상태
-  const [barcodeListening, setBarcodeListening] = useState(false);
-  const [barcodePort, setBarcodePort] = useState<string>("");
-  const [lastScannedBarcode, setLastScannedBarcode] = useState<string>("");
-
-  // cleanup에서 현재 상태를 참조하기 위한 ref
+  // cleanup에서 현재 상태를 참조하기 위한 ref (Zustand 상태 기반)
   const barcodeListeningRef = useRef(barcodeListening);
 
-  // ref 동기화
+  // ref 동기화 (Zustand 상태와 동기화)
   useEffect(() => {
     barcodeListeningRef.current = barcodeListening;
   }, [barcodeListening]);
@@ -164,74 +210,410 @@ export default function InspectionPage() {
     executionLog: [],
   });
 
-  // 검사 모델 목록 로드 및 바코드 스캐너 자동 시작
-  useEffect(() => {
-    loadInspectionModels();
-    loadBarcodeSettings();
-    loadTimerSettings();
+  const initializeInspectionPage = useCallback(async () => {
+    await loadInspectionModels();
+    await loadTimerSettings();
+    await loadPowerMeterDevices();
+    await loadBarcodeScannerDevices();
   }, []);
 
-  // 바코드 설정 로드 후 자동으로 스캔 시작
+  // 페이지 진입 시 초기화
   useEffect(() => {
-    if (barcodePort && !barcodeListening) {
-      // 바코드 포트가 설정되어 있으면 자동으로 감청 시작
-      startBarcodeListening();
-    }
-  }, [barcodePort]);
+    initializeInspectionPage();
+  }, [initializeInspectionPage]);
 
-  // 컴포넌트 언마운트 시 타이머 정리
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+  // 검사 페이지 초기화
+
+  // 전력측정설비 목록 로드 (단순화)
+  const loadPowerMeterDevices = async () => {
+    console.log("🚀 [FRONTEND] loadPowerMeterDevices 함수 시작");
+
+    try {
+      console.log("🔌 [FRONTEND] 전력측정설비 목록 조회 중...");
+      console.log(
+        "🌐 [FRONTEND] API URL: http://localhost:8000/api/v1/devices/"
+      );
+
+      const response = await fetch("http://localhost:8000/api/v1/devices/");
+
+      console.log("📡 [FRONTEND] 디바이스 목록 API 응답:", {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
+      if (!response.ok) {
+        console.error("❌ [FRONTEND] API 오류 발생:", response.status);
+        throw new Error(`API 오류: ${response.status}`);
       }
-    };
-  }, []);
+
+      const allDevices = await response.json();
+      console.log("📋 [FRONTEND] 전체 디바이스 목록:", allDevices);
+
+      const powerDevices = allDevices.filter(
+        (device: any) => device.device_type === "POWER_METER"
+      );
+      console.log("🔌 [FRONTEND] 필터링된 전력측정설비:", powerDevices);
+
+      if (powerDevices.length === 0) {
+        console.log("⚠️ [FRONTEND] 등록된 전력측정설비가 없음");
+        setDeviceConnectionStatus("disconnected");
+        setConnectionError(
+          "등록된 전력측정설비가 없습니다. 장비 관리에서 설비를 등록해주세요."
+        );
+        return;
+      }
+
+      console.log(`✅ [FRONTEND] ${powerDevices.length}개의 전력측정설비 발견`);
+      console.log("🔄 [FRONTEND] 디바이스 목록 상태 업데이트 중...");
+
+      setConnectedDevices(powerDevices);
+      setDeviceConnectionStatus("disconnected");
+      setConnectionError("");
+
+      console.log("✅ [FRONTEND] 전력측정설비 목록 로드 완료");
+    } catch (error) {
+      console.error("❌ [FRONTEND] 전력측정설비 목록 조회 실패!");
+      console.error("📋 [FRONTEND] 에러 상세:", {
+        error: error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      setDeviceConnectionStatus("error");
+      setConnectionError(`전력측정설비 목록 조회 실패: ${error}`);
+    }
+  };
+
+  // 바코드 스캐너 목록 로드 (단순화)
+  const loadBarcodeScannerDevices = async () => {
+    console.log("🚀 [FRONTEND] loadBarcodeScannerDevices 함수 시작");
+
+    try {
+      console.log("📱 [FRONTEND] 바코드 스캐너 목록 조회 중...");
+      console.log(
+        "🌐 [FRONTEND] API URL: http://localhost:8000/api/v1/devices/"
+      );
+
+      const response = await fetch("http://localhost:8000/api/v1/devices/");
+
+      console.log("📡 [FRONTEND] 바코드 스캐너 API 응답:", {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
+      if (!response.ok) {
+        console.error(
+          "❌ [FRONTEND] 바코드 스캐너 API 오류 발생:",
+          response.status
+        );
+        throw new Error(`API 오류: ${response.status}`);
+      }
+
+      const allDevices = await response.json();
+      console.log("📋 [FRONTEND] 전체 디바이스 목록 (바코드용):", allDevices);
+
+      const barcodeDevices = allDevices.filter(
+        (device: any) => device.device_type === "BARCODE_SCANNER"
+      );
+      console.log("📱 [FRONTEND] 필터링된 바코드 스캐너:", barcodeDevices);
+
+      if (barcodeDevices.length === 0) {
+        console.log("⚠️ [FRONTEND] 등록된 바코드 스캐너가 없음");
+        setBarcodeConnectionStatus("disconnected");
+        setBarcodeConnectionError(
+          "등록된 바코드 스캐너가 없습니다. 장비 관리에서 스캐너를 등록해주세요."
+        );
+        return;
+      }
+
+      // 첫 번째 바코드 스캐너 정보 설정
+      const targetBarcodeDevice = barcodeDevices[0];
+      console.log("🎯 [FRONTEND] 선택된 바코드 스캐너:", targetBarcodeDevice);
+
+      console.log("🔄 [FRONTEND] 바코드 스캐너 상태 업데이트 중...");
+      setBarcodePort(targetBarcodeDevice.port || "");
+      setBarcodeConnectionStatus("disconnected");
+      setBarcodeConnectionError("");
+
+      console.log(
+        `✅ [FRONTEND] ${barcodeDevices.length}개의 바코드 스캐너 발견`
+      );
+      console.log("✅ [FRONTEND] 바코드 스캐너 목록 로드 완료");
+    } catch (error) {
+      console.error("❌ [FRONTEND] 바코드 스캐너 목록 조회 실패!");
+      console.error("📋 [FRONTEND] 에러 상세:", {
+        error: error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      setBarcodeConnectionStatus("error");
+      setBarcodeConnectionError(`바코드 스캐너 목록 조회 실패: ${error}`);
+    }
+  };
+
+  // 전력측정설비 수동 연결
+  const connectPowerMeter = async () => {
+    console.log("🚀 [FRONTEND] connectPowerMeter 함수 시작");
+    console.log("📊 [FRONTEND] 현재 상태:", {
+      connectedDevices: connectedDevices,
+      deviceConnectionStatus: deviceConnectionStatus,
+      connectionError: connectionError,
+    });
+
+    if (connectedDevices.length === 0) {
+      console.log("❌ [FRONTEND] 연결할 전력측정설비가 없음");
+      setConnectionError("연결할 전력측정설비가 없습니다.");
+      return;
+    }
+
+    const targetDevice = connectedDevices[0];
+    console.log("🎯 [FRONTEND] 대상 디바이스:", targetDevice);
+
+    if (!targetDevice || !targetDevice.id) {
+      console.log("❌ [FRONTEND] 유효하지 않은 디바이스 정보");
+      setConnectionError("유효하지 않은 디바이스 정보입니다.");
+      return;
+    }
+
+    try {
+      console.log("🔄 [FRONTEND] 상태를 'connecting'으로 변경");
+      setDeviceConnectionStatus("connecting");
+      setConnectionError("");
+
+      console.log(
+        `🔌 [FRONTEND] ${targetDevice.name} (ID: ${targetDevice.id}) 연결 시도 중...`
+      );
+      console.log(
+        `🌐 [FRONTEND] API URL: http://localhost:8000/api/v1/serial/devices/${targetDevice.id}/connect`
+      );
+
+      const response = await fetch(
+        `http://localhost:8000/api/v1/serial/devices/${targetDevice.id}/connect`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+
+      console.log("📡 [FRONTEND] API 응답 받음:", {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries()),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`✅ [FRONTEND] ${targetDevice.name} 연결 성공!`);
+        console.log("📋 [FRONTEND] 백엔드 응답 데이터:", result);
+
+        const updatedDevice: DeviceInfo = {
+          ...targetDevice,
+          connected: true,
+        };
+
+        console.log("🔄 [FRONTEND] 디바이스 상태 업데이트:", updatedDevice);
+        setConnectedDevices([updatedDevice]);
+
+        console.log("🔄 [FRONTEND] 연결 상태를 'connected'로 변경");
+        setDeviceConnectionStatus("connected");
+        setConnectionError("");
+
+        console.log("✅ [FRONTEND] 모든 상태 업데이트 완료");
+        console.log("📊 [FRONTEND] 업데이트 후 상태:", {
+          connectedDevices: [updatedDevice],
+          deviceConnectionStatus: "connected",
+          connectionError: "",
+        });
+      } else {
+        const errorText = await response.text();
+        console.error(`❌ [FRONTEND] ${targetDevice.name} 연결 실패!`);
+        console.error("📋 [FRONTEND] 에러 응답:", {
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText,
+        });
+
+        setDeviceConnectionStatus("error");
+        setConnectionError(`연결 실패: ${errorText}`);
+      }
+    } catch (error) {
+      console.error("❌ [FRONTEND] 전력측정설비 연결 오류!");
+      console.error("📋 [FRONTEND] 에러 상세:", {
+        error: error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      setDeviceConnectionStatus("error");
+      setConnectionError(`연결 오류: ${error}`);
+    }
+  };
+
+  // 바코드 스캐너 수동 연결
+  const connectBarcodeScanner = async () => {
+    console.log("🚀 [FRONTEND] connectBarcodeScanner 함수 시작");
+    console.log("📊 [FRONTEND] 현재 바코드 상태:", {
+      barcodePort: barcodePort,
+      barcodeConnectionStatus: barcodeConnectionStatus,
+      barcodeConnectionError: barcodeConnectionError,
+      barcodeListening: barcodeListening,
+    });
+
+    if (!barcodePort) {
+      console.log("❌ [FRONTEND] 바코드 스캐너 포트가 설정되지 않음");
+      setBarcodeConnectionError("바코드 스캐너 포트가 설정되지 않았습니다.");
+      return;
+    }
+
+    try {
+      console.log("🔄 [FRONTEND] 바코드 연결 상태를 'connecting'으로 변경");
+      setBarcodeConnectionStatus("connecting");
+      setBarcodeConnectionError("");
+
+      console.log("📱 [FRONTEND] 바코드 스캐너 연결 시도 중...");
+      console.log(`🔌 [FRONTEND] 포트: ${barcodePort}`);
+
+      const result = await apiClient.startBarcodeListening();
+      console.log("📡 [FRONTEND] 바코드 API 응답:", result);
+
+      if (
+        result &&
+        typeof result === "object" &&
+        "success" in result &&
+        result.success
+      ) {
+        console.log("✅ [FRONTEND] 바코드 스캐너 연결 성공!");
+        console.log("🔄 [FRONTEND] 바코드 수신 상태를 true로 설정");
+        setBarcodeListening(true);
+
+        console.log("🔄 [FRONTEND] 바코드 연결 상태를 'connected'로 변경");
+        setBarcodeConnectionStatus("connected");
+        setBarcodeConnectionError("");
+
+        console.log("✅ [FRONTEND] 바코드 스캐너 모든 상태 업데이트 완료");
+      } else {
+        const errorMessage =
+          result && typeof result === "object" && "message" in result
+            ? String((result as any).message)
+            : "바코드 스캐너 연결 실패";
+        console.error("❌ [FRONTEND] 바코드 스캐너 연결 실패!");
+        console.error("📋 [FRONTEND] 에러 메시지:", errorMessage);
+        console.error("📋 [FRONTEND] 원본 응답:", result);
+
+        setBarcodeConnectionStatus("error");
+        setBarcodeConnectionError(errorMessage);
+      }
+    } catch (error) {
+      console.error("❌ [FRONTEND] 바코드 스캐너 연결 오류!");
+      console.error("📋 [FRONTEND] 에러 상세:", {
+        error: error,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      setBarcodeConnectionStatus("error");
+      setBarcodeConnectionError(`연결 오류: ${error}`);
+    }
+  };
+
+  // 검사설비로 검사 명령 전송
+  const sendInspectionCommandToDevice = async (
+    barcode: string,
+    modelId: number
+  ) => {
+    try {
+      console.log("검사설비로 명령 전송:", { barcode, modelId });
+
+      // WebSocket을 통해 검사 명령 전송
+      sendInspectionMessage({
+        type: "start_inspection",
+        data: {
+          barcode: barcode,
+          inspection_model_id: modelId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // WebSocket 명령 전송만 수행 (API 호출은 장비 연결 확인 후 별도 처리)
+      console.log("WebSocket 검사 명령 전송 완료");
+    } catch (error) {
+      console.error("검사 명령 전송 실패:", error);
+      // setError는 useInspection 훅에서 제공되므로 error 상태를 직접 설정하지 않음
+      console.error("검사 명령 전송에 실패했습니다");
+    }
+  };
 
   // 바코드 콜백 등록 및 cleanup
   useEffect(() => {
     if (setBarcodeCallback) {
-      setBarcodeCallback(handleBarcodeReceived);
+      setBarcodeCallback(async (barcodeData: string) => {
+        console.log("🔄 바코드 수신:", barcodeData.trim());
+
+        // 1. 바코드 상태 업데이트
+        setBarcode(barcodeData.trim());
+        setLastScannedBarcode(barcodeData.trim());
+
+        // 2. 검사 모델이 선택되지 않은 경우
+        if (!selectedModelId) {
+          console.log("⚠️ 검사 모델을 선택해주세요");
+          return;
+        }
+
+        // 3. 전력측정설비 연결 상태 확인
+        if (
+          deviceConnectionStatus === "connected" &&
+          connectedDevices.length > 0
+        ) {
+          console.log("🔋 전력측정설비 연결됨 - 검사 프로세스 시작");
+
+          // 검사 명령 전송
+          await sendInspectionCommandToDevice(
+            barcodeData.trim(),
+            selectedModelId
+          );
+
+          // 검사 프로세스 시작
+          await processBarcodeScan(barcodeData.trim(), selectedModelId);
+        } else {
+          console.log("⚠️ 전력측정설비가 연결되지 않음 - 바코드만 수신됨");
+        }
+      });
     }
 
-    // 컴포넌트 언마운트 시 콜백 해제 및 바코드 감청 중지
     return () => {
       if (setBarcodeCallback) {
         setBarcodeCallback(null);
       }
-      // ref를 사용하여 현재 상태 확인
-      if (barcodeListeningRef.current) {
-        stopBarcodeListening();
-      }
     };
-  }, [setBarcodeCallback, selectedModelId]);
+  }, [
+    selectedModelId,
+    deviceConnectionStatus,
+    connectedDevices.length,
+    processBarcodeScan,
+    sendInspectionCommandToDevice,
+  ]);
 
-  // 페이지 가시성 변경 시 바코드 스캐너 관리
+  // 컴포넌트 언마운트 시 타이머 정리
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        // 페이지가 숨겨질 때 바코드 스캐너 중지
-        if (barcodeListeningRef.current) {
-          stopBarcodeListening();
-        }
-      } else {
-        // 페이지가 다시 보일 때 바코드 스캐너 재시작
-        if (barcodePort && !barcodeListeningRef.current) {
-          startBarcodeListening();
-        }
+    return () => {
+      const timer = timerRef.current;
+      if (timer) {
+        clearInterval(timer);
       }
     };
+  }, []);
 
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [barcodePort]);
-
-  // 측정 데이터를 단계별로 분리하여 차트 데이터로 변환
+  // 실시간 측정 데이터를 단계별로 분리하여 차트 데이터로 변환
   useEffect(() => {
     if (measurementHistory.length > 0 && !isPaused) {
+      console.log("측정 데이터 업데이트:", measurementHistory.length, "개");
+
       // P1, P2, P3 데이터를 각각 분리
       const p1Measurements = measurementHistory
         .filter((m) => m.phase === "P1")
@@ -266,8 +648,45 @@ export default function InspectionPage() {
       setP1Data(p1Measurements);
       setP2Data(p2Measurements);
       setP3Data(p3Measurements);
+
+      console.log("차트 데이터 업데이트 완료:", {
+        P1: p1Measurements.length,
+        P2: p2Measurements.length,
+        P3: p3Measurements.length,
+      });
     }
   }, [measurementHistory, isPaused]);
+
+  // 실시간 측정값 수신 시 즉시 차트 업데이트
+  useEffect(() => {
+    if (currentMeasurement && !isPaused) {
+      console.log("실시간 측정값 수신:", currentMeasurement);
+
+      const newDataPoint = {
+        timestamp: currentMeasurement.timestamp,
+        time: new Date(currentMeasurement.timestamp).toLocaleTimeString(
+          "ko-KR"
+        ),
+        value: currentMeasurement.value,
+        barcode: currentMeasurement.barcode,
+        result: currentMeasurement.result,
+      };
+
+      // 해당 단계 차트에 즉시 추가
+      if (currentMeasurement.phase === "P1") {
+        setP1Data((prev) => [...prev, newDataPoint].slice(-20));
+      } else if (currentMeasurement.phase === "P2") {
+        setP2Data((prev) => [...prev, newDataPoint].slice(-20));
+      } else if (currentMeasurement.phase === "P3") {
+        setP3Data((prev) => [...prev, newDataPoint].slice(-20));
+      }
+
+      console.log(
+        `${currentMeasurement.phase} 단계 실시간 데이터 추가:`,
+        newDataPoint
+      );
+    }
+  }, [currentMeasurement, isPaused]);
 
   const loadInspectionModels = async () => {
     try {
@@ -281,75 +700,13 @@ export default function InspectionPage() {
       setInspectionModels(models as InspectionModel[]);
 
       // 첫 번째 모델을 자동 선택
-      if (models && models.length > 0) {
+      if (models && models.length > 0 && models[0]) {
         setSelectedModelId(models[0].id);
       }
     } catch (err) {
       console.error("검사 모델 로드 오류:", err);
     } finally {
       setIsLoadingModels(false);
-    }
-  };
-
-  // 바코드 스캐너 설정 로드 (devices 페이지에서 설정된 정보)
-  const loadBarcodeSettings = async () => {
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/v1/devices/barcode/status"
-      );
-
-      // 응답 상태 확인
-      if (!response.ok) {
-        console.error(
-          `API 응답 오류: ${response.status} ${response.statusText}`
-        );
-        // API 오류 시 상태 초기화
-        setBarcodePort("");
-        setBarcodeListening(false);
-        setLastScannedBarcode("");
-        return;
-      }
-
-      // Content-Type 확인
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        console.error("응답이 JSON이 아닙니다:", contentType);
-        const text = await response.text();
-        console.error("응답 내용:", text);
-        // JSON이 아닌 경우 상태 초기화
-        setBarcodePort("");
-        setBarcodeListening(false);
-        setLastScannedBarcode("");
-        return;
-      }
-
-      const data = await response.json();
-
-      // 실제 연결 상태만 반영
-      if (data.connected_port) {
-        setBarcodePort(data.connected_port);
-      } else {
-        setBarcodePort("");
-      }
-
-      // 실제 감청 상태만 반영 (포트가 연결되어 있을 때만)
-      if (data.is_listening && data.connected_port) {
-        setBarcodeListening(true);
-      } else {
-        setBarcodeListening(false);
-      }
-
-      if (data.last_barcode) {
-        setLastScannedBarcode(data.last_barcode);
-      } else {
-        setLastScannedBarcode("");
-      }
-    } catch (err) {
-      console.error("바코드 설정 로드 실패:", err);
-      // 에러 시 상태 초기화
-      setBarcodePort("");
-      setBarcodeListening(false);
-      setLastScannedBarcode("");
     }
   };
 
@@ -416,401 +773,48 @@ export default function InspectionPage() {
     }
   };
 
-  // 바코드 스캐너 실시간 감청 시작
-  const startBarcodeListening = async () => {
-    if (!barcodePort) {
-      console.log("바코드 포트가 설정되지 않았습니다.");
-      setBarcodeListening(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/v1/devices/barcode/start-listening",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            port: barcodePort,
-            baudrate: 9600,
-            data_bits: 8,
-            stop_bits: 1,
-            parity: "N",
-            timeout: 1,
-          }),
-        }
-      );
-
-      // 응답 상태 확인
-      if (!response.ok) {
-        console.error(
-          `바코드 감청 시작 API 오류: ${response.status} ${response.statusText}`
-        );
-        setBarcodeListening(false);
-        return;
-      }
-
-      // Content-Type 확인
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        console.error("바코드 감청 시작 응답이 JSON이 아닙니다:", contentType);
-        const text = await response.text();
-        console.error("응답 내용:", text);
-        setBarcodeListening(false);
-        return;
-      }
-
-      const result = await response.json();
-      if (result.success) {
-        setBarcodeListening(true);
-        console.log(`바코드 스캐너 자동 시작됨: ${barcodePort}`);
-      } else {
-        console.error(`바코드 감청 시작 실패: ${result.message}`);
-        setBarcodeListening(false);
-      }
-    } catch (err) {
-      console.error("바코드 감청 시작 오류:", err);
-      setBarcodeListening(false);
-    }
-  };
-
-  // 바코드 스캐너 실시간 감청 중지
-  const stopBarcodeListening = async () => {
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/v1/devices/barcode/stop-listening",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-
-      // 응답 상태 확인
-      if (!response.ok) {
-        console.error(
-          `바코드 감청 중지 API 오류: ${response.status} ${response.statusText}`
-        );
-        return;
-      }
-
-      // Content-Type 확인
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        console.error("바코드 감청 중지 응답이 JSON이 아닙니다:", contentType);
-        const text = await response.text();
-        console.error("응답 내용:", text);
-        return;
-      }
-
-      const result = await response.json();
-      if (result.success) {
-        setBarcodeListening(false);
-        console.log("바코드 스캐너 감청 중지됨");
-      } else {
-        console.error(`바코드 감청 중지 실패: ${result.message}`);
-      }
-    } catch (err) {
-      console.error("바코드 감청 중지 오류:", err);
-    }
-  };
-
-  // 바코드 데이터 수신 처리 (WebSocket에서 호출될 예정)
-  const handleBarcodeReceived = (barcodeData: string) => {
-    setBarcode(barcodeData.trim());
-    setLastScannedBarcode(barcodeData.trim());
-
-    // 자동 검사 기능이 활성화된 경우 자동 검사 프로세스 시작
-    if (selectedModelId && barcodeData.trim() && timerSettings.autoProgress) {
-      startAutoInspectionProcess(barcodeData.trim());
-    } else if (selectedModelId && barcodeData.trim()) {
-      // 수동 모드: 기존 로직 유지
-      processBarcodeScann(barcodeData.trim(), selectedModelId);
-    }
-  };
-
-  // 자동 검사 프로세스 시작
+  // 자동 검사 프로세스 시작 (단순화)
   const startAutoInspectionProcess = async (scanBarcode: string) => {
     console.log("자동 검사 프로세스 시작:", scanBarcode);
 
-    // 기본 검사 시작
     if (selectedModelId) {
-      await processBarcodeScann(scanBarcode, selectedModelId);
+      await processBarcodeScan(scanBarcode, selectedModelId);
     }
-
-    // SCPI 시험 자동 실행
-    await executeInspectionRoutine(scanBarcode);
-
-    // P1 준비 단계 시작
-    startPhase("P1", "prepare", timerSettings.p1PrepareTime);
   };
 
-  // 검사 루틴 실행 (GPT-9800 + WT310)
+  // 검사 루틴 실행 (단순화)
   const executeInspectionRoutine = async (barcode: string) => {
-    addSCPILog(
-      `검사 시작 - 바코드: ${barcode}`,
-      "3대안전 + 전력측정 시작",
-      true
-    );
+    console.log(`검사 시작 - 바코드: ${barcode}`);
 
     try {
-      // 1. 3대안전 시험 순환 실행
-      const testTypes: Array<"ACW" | "DCW" | "IR" | "GB"> = [
-        "ACW",
-        "DCW",
-        "IR",
-        "GB",
-      ];
-      const testResults: Record<string, any> = {};
-
-      for (const testType of testTypes) {
-        addSCPILog(
-          `${testType} 시험 시작`,
-          `${testType} 시험 실행 중...`,
-          true
-        );
-
-        // 시험 실행 (INIT)
-        await executeSCPICommand("INIT");
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // 시험 실행 대기
-
-        // 상태 확인
-        const statusResult = await executeSCPICommand("STAT?");
-
-        if (statusResult.includes("READY")) {
-          // 결과 조회
-          const measureResult = await executeSCPICommand("MEAS?");
-
-          // 결과 파싱
-          const resultParts = measureResult.split(",");
-          if (resultParts.length >= 2) {
-            const testResult = resultParts[1].trim();
-            const success = testResult === "PASS";
-
-            testResults[testType] = {
-              result: testResult,
-              data: measureResult,
-              success: success,
-            };
-
-            // 실제 측정 데이터로 차트 업데이트
-            updateChartData(testType, measureResult, barcode);
-          }
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      // 전력측정설비가 연결된 경우에만 검사 실행
+      if (
+        deviceConnectionStatus === "connected" &&
+        connectedDevices.length > 0
+      ) {
+        console.log("전력측정설비와 연결되어 검사 실행 가능");
+        // 실제 검사 로직은 백엔드에서 처리
+      } else {
+        console.log("전력측정설비가 연결되지 않아 검사 실행 불가");
       }
-
-      // 2. WT310 전력 측정
-      addSCPILog("WT310 전력 측정 시작", "실시간 전력 측정", true);
-
-      // 적산 시작
-      await executeSCPICommand(":INTegrate:STARt");
-
-      // 실시간 측정값 조회 (3회)
-      for (let i = 0; i < 3; i++) {
-        const measureResult = await executeSCPICommand(
-          ":NUMeric:NORMal:VALue?"
-        );
-
-        // 결과 파싱
-        const values = measureResult.split(",");
-        if (values.length >= 4) {
-          const voltage = parseFloat(values[0]);
-          const current = parseFloat(values[1]);
-          const power = parseFloat(values[2]);
-          const frequency = parseFloat(values[3]);
-
-          addSCPILog(
-            `전력측정 ${i + 1}`,
-            `V=${voltage.toFixed(2)}V, I=${current.toFixed(
-              3
-            )}A, P=${power.toFixed(2)}W`,
-            true
-          );
-
-          // 실제 측정 데이터로 차트 업데이트 (P2 단계에 전력값 적용)
-          updateChartData("POWER", power.toString(), barcode);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      // 적산값 조회
-      const integrationResult = await executeSCPICommand(":INTegrate:VALue?");
-      addSCPILog("전력량 적산 결과", `적산값: ${integrationResult}`, true);
-
-      // 전체 결과 요약
-      setSCPIExecution((prev) => ({
-        ...prev,
-        commandResults: {
-          ...prev.commandResults,
-          [barcode]: {
-            testResults,
-            powerData: integrationResult,
-            timestamp: new Date().toISOString(),
-            overallResult: Object.values(testResults).every(
-              (r: any) => r.success
-            )
-              ? "PASS"
-              : "FAIL",
-          },
-        },
-      }));
-
-      addSCPILog(
-        `검사 완료 - ${barcode}`,
-        `전체 결과: ${
-          Object.values(testResults).every((r: any) => r.success)
-            ? "PASS"
-            : "FAIL"
-        }`,
-        Object.values(testResults).every((r: any) => r.success)
-      );
     } catch (error) {
-      addSCPILog(
-        `검사 오류 - ${barcode}`,
-        error instanceof Error ? error.message : String(error),
-        false
-      );
+      console.error("검사 실행 오류:", error);
     }
   };
 
-  // 차트 데이터 업데이트
+  // 차트 데이터 업데이트 (단순화)
   const updateChartData = (
     testType: string,
     result: string,
     barcode: string
   ) => {
-    const timestamp = new Date().toISOString();
-    const time = new Date().toLocaleTimeString("ko-KR");
-
-    let value = 0;
-    let phase = "P1";
-
-    if (testType === "ACW" || testType === "DCW") {
-      // 전압값 추출 (예: "1.500kV" -> 1.500)
-      const voltageMatch = result.match(/(\d+\.\d+)kV/);
-      if (voltageMatch) {
-        value = parseFloat(voltageMatch[1]);
-        phase = "P1";
-      }
-    } else if (testType === "IR") {
-      // 저항값 추출 (예: "999M ohm" -> 999)
-      const resistanceMatch = result.match(/(\d+)M ohm/);
-      if (resistanceMatch) {
-        value = parseFloat(resistanceMatch[1]);
-        phase = "P2";
-      }
-    } else if (testType === "GB") {
-      // 저항값 추출 (예: "0.05 ohm" -> 0.05)
-      const resistanceMatch = result.match(/(\d+\.\d+) ohm/);
-      if (resistanceMatch) {
-        value = parseFloat(resistanceMatch[1]);
-        phase = "P3";
-      }
-    } else if (testType === "POWER") {
-      // 전력값 직접 사용
-      value = parseFloat(result);
-      phase = "P2";
-    }
-
-    const newDataPoint = {
-      timestamp,
-      time,
-      value,
-      barcode,
-      result: value > 0 ? "PASS" : "FAIL",
-    };
-
-    // 해당 단계 차트에 데이터 추가
-    if (phase === "P1") {
-      setP1Data((prev) => [...prev, newDataPoint].slice(-20));
-    } else if (phase === "P2") {
-      setP2Data((prev) => [...prev, newDataPoint].slice(-20));
-    } else if (phase === "P3") {
-      setP3Data((prev) => [...prev, newDataPoint].slice(-20));
-    }
+    console.log(`차트 데이터 업데이트: ${testType} - ${result}`);
+    // 실제 차트 업데이트는 WebSocket으로 받은 데이터로 처리
   };
 
-  // 단계별 타이머 시작
-  const startPhase = (
-    step: "P1" | "P2" | "P3",
-    phase: "prepare" | "inspect",
-    duration: number
-  ) => {
-    // 이전 타이머 정리
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-
-    setAutoInspection({
-      isRunning: true,
-      currentStep: step,
-      currentPhase: phase,
-      remainingTime: duration,
-      totalTime: duration,
-    });
-
-    console.log(`${step} ${phase} 단계 시작 - ${duration}초`);
-
-    let timeLeft = duration;
-    timerRef.current = setInterval(() => {
-      timeLeft -= 1;
-
-      setAutoInspection((prev) => ({
-        ...prev,
-        remainingTime: timeLeft,
-      }));
-
-      if (timeLeft <= 0) {
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-        }
-
-        // 다음 단계로 진행
-        handlePhaseComplete(step, phase);
-      }
-    }, 1000);
-  };
-
-  // 단계 완료 후 다음 단계 진행
-  const handlePhaseComplete = (
-    step: "P1" | "P2" | "P3",
-    phase: "prepare" | "inspect"
-  ) => {
-    console.log(`${step} ${phase} 단계 완료`);
-
-    if (step === "P1") {
-      if (phase === "prepare") {
-        // P1 준비 완료 → P1 검사 시작
-        startPhase("P1", "inspect", timerSettings.p1Duration);
-      } else {
-        // P1 검사 완료 → P2 준비 시작
-        startPhase("P2", "prepare", timerSettings.p2PrepareTime);
-      }
-    } else if (step === "P2") {
-      if (phase === "prepare") {
-        // P2 준비 완료 → P2 검사 시작
-        startPhase("P2", "inspect", timerSettings.p2Duration);
-      } else {
-        // P2 검사 완료 → P3 준비 시작
-        startPhase("P3", "prepare", timerSettings.p3PrepareTime);
-      }
-    } else if (step === "P3") {
-      if (phase === "prepare") {
-        // P3 준비 완료 → P3 검사 시작
-        startPhase("P3", "inspect", timerSettings.p3Duration);
-      } else {
-        // P3 검사 완료 → 자동 검사 종료
-        completeAutoInspection();
-      }
-    }
-  };
-
-  // 자동 검사 완료
+  // 자동 검사 완료 (단순화)
   const completeAutoInspection = () => {
     console.log("자동 검사 프로세스 완료");
-
     setAutoInspection({
       isRunning: false,
       currentPhase: null,
@@ -818,236 +822,16 @@ export default function InspectionPage() {
       remainingTime: 0,
       totalTime: 0,
     });
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
   };
 
-  // SCPI 로그 추가 함수
+  // SCPI 로그 추가 함수 (단순화)
   const addSCPILog = (command: string, result: string, success: boolean) => {
-    setSCPIExecution((prev) => ({
-      ...prev,
-      executionLog: [
-        {
-          timestamp: new Date().toLocaleTimeString(),
-          command,
-          result,
-          success,
-        },
-        ...prev.executionLog.slice(0, 19),
-      ], // 최근 20개만 유지
-    }));
+    console.log(`SCPI: ${command} -> ${result} (${success ? "성공" : "실패"})`);
   };
 
-  // GPT-9800 3대안전 시험 루틴 실행
-  const executeGPT9800Routine = async (
-    testType: "ACW" | "DCW" | "IR" | "GB"
-  ) => {
-    setSCPIExecution((prev) => ({
-      ...prev,
-      isRunning: true,
-      deviceType: "GPT-9800",
-      currentCommand: `${testType} 시험 시작`,
-    }));
-
-    addSCPILog(`${testType} 시험 루틴 시작`, "시작됨", true);
-
-    try {
-      // 1. 모드 전환 (수동 모드)
-      await executeSCPICommand("MAIN:FUNC MANU");
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // 2. 시험 조건 확인 (이미 설정되어 있다고 가정)
-      addSCPILog(`${testType} 시험 조건 확인`, "설정 완료", true);
-
-      // 3. 시험 실행 (INIT)
-      await executeSCPICommand("INIT");
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // 시험 실행 대기
-
-      // 4. 시험 상태 확인
-      const statusResult = await executeSCPICommand("STAT?");
-
-      if (statusResult.includes("COMPLETE") || statusResult.includes("READY")) {
-        // 5. 결과 조회 (MEAS?)
-        const measureResult = await executeSCPICommand("MEAS?");
-
-        // 결과 파싱 (예: ">ACW, PASS, 1.500kV, 0.050mA, T=005.0S")
-        const resultParts = measureResult.split(",");
-        if (resultParts.length >= 2) {
-          const testResult = resultParts[1].trim();
-          const success = testResult === "PASS";
-
-          addSCPILog(`${testType} 시험 결과`, measureResult, success);
-
-          setSCPIExecution((prev) => ({
-            ...prev,
-            commandResults: {
-              ...prev.commandResults,
-              [testType]: {
-                result: testResult,
-                data: measureResult,
-                success: success,
-              },
-            },
-          }));
-        }
-      }
-    } catch (error) {
-      addSCPILog(
-        `${testType} 시험 오류`,
-        error instanceof Error ? error.message : String(error),
-        false
-      );
-    }
-
-    setSCPIExecution((prev) => ({
-      ...prev,
-      isRunning: false,
-      currentCommand: "",
-    }));
-  };
-
-  // WT310 전력 측정 루틴 실행
-  const executeWT310Routine = async () => {
-    setSCPIExecution((prev) => ({
-      ...prev,
-      isRunning: true,
-      deviceType: "WT310",
-      currentCommand: "전력 측정 시작",
-    }));
-
-    addSCPILog("WT310 전력 측정 루틴 시작", "시작됨", true);
-
-    try {
-      // 1. 출력 항목 설정 확인
-      addSCPILog(
-        "출력 항목 설정 확인",
-        "U,I,P,FREQ,Q,S,LAMBDA,WP 설정 완료",
-        true
-      );
-
-      // 2. 측정 범위 자동 설정
-      await executeSCPICommand(":INPut1:VOLTage:RANGe AUTO");
-      await executeSCPICommand(":INPut1:CURRent:RANGe AUTO");
-
-      // 3. 업데이트 주기 설정
-      await executeSCPICommand(":RATE 200MS");
-
-      // 4. 적산 시작
-      await executeSCPICommand(":INTegrate:STARt");
-      addSCPILog("전력량 적산 시작", "적산 모드 활성화", true);
-
-      // 5. 실시간 측정값 조회 (5회 반복)
-      for (let i = 0; i < 5; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        const measureResult = await executeSCPICommand(
-          ":NUMeric:NORMal:VALue?"
-        );
-
-        // 결과 파싱 (U,I,P,FREQ,Q,S,LAMBDA,WP)
-        const values = measureResult.split(",");
-        if (values.length >= 4) {
-          const voltage = parseFloat(values[0]);
-          const current = parseFloat(values[1]);
-          const power = parseFloat(values[2]);
-          const frequency = parseFloat(values[3]);
-
-          addSCPILog(
-            `측정값 ${i + 1}`,
-            `V=${voltage.toFixed(2)}V, I=${current.toFixed(
-              3
-            )}A, P=${power.toFixed(2)}W, F=${frequency.toFixed(1)}Hz`,
-            true
-          );
-
-          setSCPIExecution((prev) => ({
-            ...prev,
-            commandResults: {
-              ...prev.commandResults,
-              [`measurement_${i + 1}`]: {
-                voltage,
-                current,
-                power,
-                frequency,
-                timestamp: new Date().toISOString(),
-              },
-            },
-          }));
-        }
-      }
-
-      // 6. 적산값 조회
-      const integrationResult = await executeSCPICommand(":INTegrate:VALue?");
-      const integrationTime = await executeSCPICommand(":INTegrate:TIMer?");
-
-      addSCPILog(
-        "전력량 적산 결과",
-        `적산값: ${integrationResult}, 시간: ${integrationTime}초`,
-        true
-      );
-    } catch (error) {
-      addSCPILog(
-        "WT310 측정 오류",
-        error instanceof Error ? error.message : String(error),
-        false
-      );
-    }
-
-    setSCPIExecution((prev) => ({
-      ...prev,
-      isRunning: false,
-      currentCommand: "",
-    }));
-  };
-
-  // 실제 SCPI 명령어 실행 (시뮬레이션)
-  const executeSCPICommand = async (command: string): Promise<string> => {
-    console.log(`SCPI 명령어 실행: ${command}`);
-
-    // 시뮬레이션 응답
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    let response = "OK";
-    if (command.includes("?")) {
-      // 쿼리 명령어 응답 시뮬레이션
-      if (command === "*IDN?") {
-        response = "GPT-9801,MODEL-PE200,FW1.1.0,SN000001,RMT";
-      } else if (command === "STAT?") {
-        response = "READY";
-      } else if (command === "MEAS?") {
-        const testTypes = ["ACW", "DCW", "IR", "GB"];
-        const results = ["PASS", "FAIL"];
-        const randomTest =
-          testTypes[Math.floor(Math.random() * testTypes.length)];
-        const randomResult =
-          results[Math.floor(Math.random() * results.length)];
-        response = `>${randomTest}, ${randomResult}, 1.500kV, 0.050mA, T=005.0S`;
-      } else if (command === ":NUMeric:NORMal:VALue?") {
-        const voltage = (220 + Math.random() * 10).toFixed(2);
-        const current = (0.5 + Math.random() * 0.1).toFixed(3);
-        const power = (parseFloat(voltage) * parseFloat(current)).toFixed(2);
-        const freq = (60 + Math.random() * 0.1).toFixed(1);
-        response = `${voltage},${current},${power},${freq},15.3,101.2,0.98,1.25`;
-      } else if (command === ":INTegrate:VALue?") {
-        response = "1234.56,1256.78,345.21";
-      } else if (command === ":INTegrate:TIMer?") {
-        response = "3661";
-      }
-    }
-
-    addSCPILog(command, response, true);
-    return response;
-  };
-
-  // 자동 검사 중지
+  // 자동 검사 중지 (단순화)
   const stopAutoInspection = () => {
     console.log("자동 검사 중지");
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-
     setAutoInspection({
       isRunning: false,
       currentPhase: null,
@@ -1059,92 +843,25 @@ export default function InspectionPage() {
 
   const handleStartListening = async () => {
     await startListening();
-
-    // 검사 시작 시 자동으로 장비 연결 및 초기화 시도
-    await initializeDevices();
-  };
-
-  // 장비 초기화 함수
-  const initializeDevices = async () => {
-    try {
-      addSCPILog("장비 초기화 시작", "GPT-9800 및 WT310 연결 확인", true);
-
-      // 1. GPT-9800 초기화
-      await executeSCPICommand("*IDN?"); // 장비 식별
-      await executeSCPICommand("MAIN:FUNC MANU"); // 수동 모드 전환
-
-      // 2. WT310 초기화
-      await executeSCPICommand(":INPut1:VOLTage:RANGe AUTO");
-      await executeSCPICommand(":INPut1:CURRent:RANGe AUTO");
-      await executeSCPICommand(":RATE 200MS");
-
-      addSCPILog("장비 초기화 완료", "검사 준비 완료", true);
-    } catch (error) {
-      addSCPILog(
-        "장비 초기화 오류",
-        error instanceof Error ? error.message : String(error),
-        false
-      );
-    }
   };
 
   const handleStopInspection = async () => {
     await stopInspection();
     setBarcode("");
-    // 자동 검사도 중지
     stopAutoInspection();
   };
 
-  // 단계별 타이머 표시 컴포넌트
+  // 단계별 타이머 표시 컴포넌트 (단순화)
   const PhaseTimer = ({ phase }: { phase: "P1" | "P2" | "P3" }) => {
     const isActive =
       autoInspection.isRunning && autoInspection.currentStep === phase;
 
-    // 자동 검사가 실행 중이고 현재 활성 단계일 때만 표시
     if (!autoInspection.isRunning || !isActive) return null;
-
-    const progress =
-      autoInspection.totalTime > 0
-        ? ((autoInspection.totalTime - autoInspection.remainingTime) /
-            autoInspection.totalTime) *
-          100
-        : 0;
-
-    const phaseText =
-      autoInspection.currentPhase === "prepare" ? "준비 중" : "검사 중";
-    const phaseColor =
-      autoInspection.currentPhase === "prepare"
-        ? "text-orange-600"
-        : "text-blue-600";
 
     return (
       <div className="absolute top-2 right-2 bg-white rounded-lg p-2 shadow-md border">
-        <div className="flex items-center gap-2 mb-1">
-          <div
-            className={`h-2 w-2 rounded-full animate-pulse ${
-              autoInspection.currentPhase === "prepare"
-                ? "bg-orange-500"
-                : "bg-blue-500"
-            }`}
-          ></div>
-          <span className={`text-xs font-medium ${phaseColor}`}>
-            {phaseText}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="text-lg font-bold text-gray-800">
-            {autoInspection.remainingTime}s
-          </div>
-          <div className="w-12 h-1 bg-gray-200 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-1000 ${
-                autoInspection.currentPhase === "prepare"
-                  ? "bg-orange-500"
-                  : "bg-blue-500"
-              }`}
-              style={{ width: `${progress}%` }}
-            ></div>
-          </div>
+        <div className="text-xs font-medium text-blue-600">
+          {phase} 단계 진행 중
         </div>
       </div>
     );
@@ -1162,20 +879,8 @@ export default function InspectionPage() {
       return;
     }
 
-    await processBarcodeScann(barcode.trim(), selectedModelId);
+    await processBarcodeScan(barcode.trim(), selectedModelId);
     setBarcode("");
-  };
-
-  const getStatusBadge = () => {
-    if (!wsConnected) {
-      return <Badge variant="destructive">연결 끊김</Badge>;
-    }
-
-    if (status.is_listening) {
-      return <Badge variant="success">검사 중</Badge>;
-    }
-
-    return <Badge variant="secondary">대기 중</Badge>;
   };
 
   const getProgressBar = () => {
@@ -1229,29 +934,122 @@ export default function InspectionPage() {
               <CardDescription>검사 상태 및 제어 옵션</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* 상태 표시 */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">연결 상태</span>
-                  {getStatusBadge()}
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">연결된 장비</span>
-                  <span className="text-sm">
-                    {status.connected_devices} / {status.total_devices}
-                  </span>
-                </div>
-
-                {/* 자동 검사 모드 표시 */}
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">자동 검사</span>
-                  {timerSettings.autoProgress ? (
-                    <Badge variant="default" className="bg-green-500">
-                      활성화
+              <div>
+                {/* 전력측정설비 연결 상태 */}
+                <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-medium text-gray-700">
+                      전력측정설비
+                    </span>
+                    <Badge
+                      variant={
+                        deviceConnectionStatus === "connected"
+                          ? "default"
+                          : deviceConnectionStatus === "connecting"
+                          ? "secondary"
+                          : "destructive"
+                      }
+                      className={
+                        deviceConnectionStatus === "connected"
+                          ? "bg-green-500"
+                          : deviceConnectionStatus === "connecting"
+                          ? "bg-blue-500"
+                          : "bg-red-500"
+                      }
+                    >
+                      {deviceConnectionStatus === "connected" && (
+                        <Power className="h-3 w-3 mr-1" />
+                      )}
+                      {deviceConnectionStatus === "connecting" && (
+                        <Activity className="h-3 w-3 mr-1" />
+                      )}
+                      {deviceConnectionStatus === "error" && (
+                        <AlertCircle className="h-3 w-3 mr-1" />
+                      )}
+                      {deviceConnectionStatus === "disconnected" && (
+                        <AlertCircle className="h-3 w-3 mr-1" />
+                      )}
+                      {deviceConnectionStatus === "connected" && "연결됨"}
+                      {deviceConnectionStatus === "connecting" && "연결 중"}
+                      {deviceConnectionStatus === "error" && "연결 실패"}
+                      {deviceConnectionStatus === "disconnected" && "미연결"}
                     </Badge>
+                  </div>
+
+                  {deviceConnectionStatus === "connected" &&
+                  connectedDevices.length > 0 ? (
+                    <div className="space-y-2">
+                      {connectedDevices.map((device, index) => (
+                        <div
+                          key={index}
+                          className="p-2 bg-green-50 border border-green-200 rounded text-xs"
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className="font-medium text-green-800">
+                              {device.name}
+                            </span>
+                            <span className="text-green-600 font-mono">
+                              {device.port}
+                            </span>
+                          </div>
+                          <div className="text-green-600 mt-1">
+                            {device.manufacturer} {device.model}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : deviceConnectionStatus === "connecting" ? (
+                    <div className="text-xs text-blue-600 p-2 bg-blue-50 border border-blue-200 rounded flex items-center gap-2">
+                      <Activity className="h-3 w-3 animate-spin" />
+                      전력측정설비 연결 중...
+                    </div>
                   ) : (
-                    <Badge variant="secondary">비활성화</Badge>
+                    <div className="space-y-2">
+                      {connectionError && (
+                        <div className="text-xs text-red-600 p-2 bg-red-50 border border-red-200 rounded">
+                          {connectionError}
+                        </div>
+                      )}
+                      <Button
+                        onClick={connectPowerMeter}
+                        size="sm"
+                        variant="outline"
+                        className="w-full text-xs"
+                        disabled={connectedDevices.length === 0}
+                      >
+                        <Activity className="h-3 w-3 mr-1" />
+                        전력측정설비 연결
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* 디버깅 정보 표시 */}
+                  {connectionDebugInfo.lastAttempt && (
+                    <div className="mt-3 p-2 bg-gray-50 border border-gray-200 rounded text-xs">
+                      <div className="font-medium text-gray-700 mb-1">
+                        연결 디버깅 정보:
+                      </div>
+                      <div className="space-y-1">
+                        <div>
+                          마지막 시도: {connectionDebugInfo.lastAttempt}
+                        </div>
+                        {connectionDebugInfo.apiResponse && (
+                          <div>
+                            API 응답:{" "}
+                            {connectionDebugInfo.apiResponse.success
+                              ? "성공"
+                              : "실패"}
+                            (상태: {connectionDebugInfo.apiResponse.status})
+                          </div>
+                        )}
+                        {connectionDebugInfo.deviceInfo && (
+                          <div>
+                            대상 디바이스: {connectionDebugInfo.deviceInfo.name}{" "}
+                            (ID: {connectionDebugInfo.deviceInfo.id})
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -1339,12 +1137,43 @@ export default function InspectionPage() {
                       {barcodeListening ? (
                         <Badge variant="default" className="bg-green-500">
                           <Activity className="h-3 w-3 mr-1" />
-                          자동 감청 중
+                          수신중
                         </Badge>
                       ) : barcodePort ? (
-                        <Badge variant="secondary">
-                          <Clock className="h-3 w-3 mr-1" />
-                          시작 중...
+                        <Badge
+                          variant={
+                            barcodeConnectionStatus === "connecting"
+                              ? "secondary"
+                              : barcodeConnectionStatus === "connected"
+                              ? "default"
+                              : barcodeConnectionStatus === "error"
+                              ? "destructive"
+                              : "secondary"
+                          }
+                          className={
+                            barcodeConnectionStatus === "connecting"
+                              ? "bg-blue-500"
+                              : barcodeConnectionStatus === "connected"
+                              ? "bg-green-500"
+                              : barcodeConnectionStatus === "error"
+                              ? "bg-red-500"
+                              : "bg-gray-500"
+                          }
+                        >
+                          {barcodeConnectionStatus === "connecting" && (
+                            <Activity className="h-3 w-3 mr-1" />
+                          )}
+                          {barcodeConnectionStatus === "connected" && (
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                          )}
+                          {barcodeConnectionStatus === "error" && (
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                          )}
+                          {barcodeConnectionStatus === "connecting" && "연결중"}
+                          {barcodeConnectionStatus === "connected" && "연결됨"}
+                          {barcodeConnectionStatus === "error" && "오류"}
+                          {barcodeConnectionStatus === "disconnected" &&
+                            "시작중"}
                         </Badge>
                       ) : (
                         <Badge variant="destructive">
@@ -1359,9 +1188,37 @@ export default function InspectionPage() {
                       💡 장비 관리 페이지에서 바코드 스캐너를 먼저 설정해주세요
                     </div>
                   )}
+                  {barcodeConnectionStatus === "error" &&
+                    barcodeConnectionError && (
+                      <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                        ❌ {barcodeConnectionError}
+                      </div>
+                    )}
+
+                  {/* 바코드 스캐너 수동 연결 버튼 */}
+                  {!barcodeListening && barcodePort && (
+                    <div className="mt-2">
+                      <Button
+                        onClick={connectBarcodeScanner}
+                        size="sm"
+                        variant="outline"
+                        className="w-full text-xs"
+                        disabled={barcodeConnectionStatus === "connecting"}
+                      >
+                        <Activity className="h-3 w-3 mr-1" />
+                        {barcodeConnectionStatus === "connecting"
+                          ? "연결 중..."
+                          : "바코드 스캐너 연결"}
+                      </Button>
+                    </div>
+                  )}
+
                   {barcodeListening && lastScannedBarcode && (
                     <div className="mt-2 text-xs text-green-600">
                       ✓ 마지막 스캔: {lastScannedBarcode}
+                      <span className="ml-2 px-1 py-0.5 bg-green-100 rounded text-green-700 font-medium">
+                        총 {scanCount}회
+                      </span>
                     </div>
                   )}
                 </div>

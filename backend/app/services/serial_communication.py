@@ -20,13 +20,41 @@ class SerialCommunicationService:
         
     def connect_device(self, device: Device) -> bool:
         """장비에 연결합니다."""
+        print(f"🚀 [SERIAL_SERVICE] connect_device 함수 시작")
+        print(f"📋 [SERIAL_SERVICE] 디바이스 정보:")
+        print(f"   - ID: {device.id}")
+        print(f"   - 이름: {device.name}")
+        print(f"   - 포트: {device.port}")
+        print(f"   - 보드레이트: {device.baud_rate}")
+        print(f"   - 데이터 비트: {device.data_bits}")
+        print(f"   - 패리티: {device.parity}")
+        print(f"   - 스톱 비트: {device.stop_bits}")
+        print(f"   - 타임아웃: {device.timeout}")
+        print(f"   - 흐름 제어: {device.flow_control}")
+        
         try:
             with self.lock:
+                print(f"🔒 [SERIAL_SERVICE] 락 획득 완료")
+                
                 # 이미 연결되어 있는 경우 연결 해제 후 재연결
                 if device.id in self.connections:
+                    print(f"⚠️ [SERIAL_SERVICE] 이미 연결된 디바이스 발견 - 기존 연결 해제 중...")
                     self.disconnect_device(device.id)
+                    print(f"✅ [SERIAL_SERVICE] 기존 연결 해제 완료")
                 
                 # 시리얼 연결 생성
+                print(f"🔌 [SERIAL_SERVICE] 시리얼 연결 생성 중...")
+                print(f"📡 [SERIAL_SERVICE] 연결 파라미터:")
+                print(f"   - 포트: {device.port}")
+                print(f"   - 보드레이트: {device.baud_rate}")
+                print(f"   - 데이터 비트: {device.data_bits}")
+                print(f"   - 패리티: {self._get_parity(device.parity)}")
+                print(f"   - 스톱 비트: {device.stop_bits}")
+                print(f"   - 타임아웃: {device.timeout}")
+                print(f"   - XON/XOFF: {device.flow_control.lower() == 'xon/xoff'}")
+                print(f"   - RTS/CTS: {device.flow_control.lower() == 'rts/cts'}")
+                print(f"   - DSR/DTR: {device.flow_control.lower() == 'dsr/dtr'}")
+                
                 connection = serial.Serial(
                     port=device.port,
                     baudrate=device.baud_rate,
@@ -39,19 +67,53 @@ class SerialCommunicationService:
                     dsrdtr=(device.flow_control.lower() == 'dsr/dtr')
                 )
                 
+                print(f"✅ [SERIAL_SERVICE] 시리얼 객체 생성 완료")
+                
                 # 연결 테스트
+                print(f"🔍 [SERIAL_SERVICE] 연결 상태 확인 중...")
+                print(f"📊 [SERIAL_SERVICE] connection.is_open: {connection.is_open}")
+                
                 if connection.is_open:
+                    print(f"✅ [SERIAL_SERVICE] 시리얼 포트 열기 성공!")
                     self.connections[device.id] = connection
+                    print(f"💾 [SERIAL_SERVICE] 연결 정보 저장 완료 - device_id: {device.id}")
                     logger.info(f"Successfully connected to device {device.name} on {device.port}")
+                    print(f"✅ [SERIAL_SERVICE] 디바이스 연결 성공!")
                     return True
                 else:
+                    print(f"❌ [SERIAL_SERVICE] 시리얼 포트 열기 실패!")
                     logger.error(f"Failed to open connection to device {device.name} on {device.port}")
                     return False
                     
         except serial.SerialException as e:
+            print(f"❌ [SERIAL_SERVICE] 시리얼 연결 예외 발생!")
+            print(f"📋 [SERIAL_SERVICE] SerialException 상세:")
+            print(f"   - 에러 타입: {type(e).__name__}")
+            print(f"   - 에러 메시지: {str(e)}")
+            print(f"   - 에러 코드: {getattr(e, 'errno', 'N/A')}")
             logger.error(f"Serial connection error for device {device.name}: {e}")
             return False
+        except FileNotFoundError as e:
+            print(f"❌ [SERIAL_SERVICE] 파일/포트를 찾을 수 없음!")
+            print(f"📋 [SERIAL_SERVICE] FileNotFoundError 상세:")
+            print(f"   - 에러 메시지: {str(e)}")
+            print(f"   - 포트: {device.port}")
+            logger.error(f"Port not found for device {device.name}: {e}")
+            return False
+        except PermissionError as e:
+            print(f"❌ [SERIAL_SERVICE] 포트 접근 권한 없음!")
+            print(f"📋 [SERIAL_SERVICE] PermissionError 상세:")
+            print(f"   - 에러 메시지: {str(e)}")
+            print(f"   - 포트: {device.port}")
+            logger.error(f"Permission denied for device {device.name}: {e}")
+            return False
         except Exception as e:
+            print(f"❌ [SERIAL_SERVICE] 예상치 못한 에러 발생!")
+            print(f"📋 [SERIAL_SERVICE] Exception 상세:")
+            print(f"   - 에러 타입: {type(e).__name__}")
+            print(f"   - 에러 메시지: {str(e)}")
+            import traceback
+            print(f"   - 스택 트레이스: {traceback.format_exc()}")
             logger.error(f"Unexpected error connecting to device {device.name}: {e}")
             return False
     

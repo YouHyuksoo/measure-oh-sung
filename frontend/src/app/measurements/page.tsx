@@ -80,7 +80,7 @@ export default function MeasurementsPage() {
   );
 
   // 측정 데이터 로드
-  const loadMeasurements = async () => {
+  const loadMeasurements = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = (await apiClient.getMeasurements()) as
@@ -98,7 +98,7 @@ export default function MeasurementsPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   // 통계 계산
   const calculateStats = (data: Measurement[]) => {
@@ -176,7 +176,7 @@ export default function MeasurementsPage() {
   // 초기 로드
   useEffect(() => {
     loadMeasurements();
-  }, []);
+  }, [loadMeasurements]);
 
   // 필터 적용
   useEffect(() => {

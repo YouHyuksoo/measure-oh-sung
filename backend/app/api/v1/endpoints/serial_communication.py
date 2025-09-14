@@ -32,23 +32,54 @@ def connect_device(
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """장비에 연결합니다."""
+    print(f"🚀 [BACKEND] connect_device API 호출됨 - device_id: {device_id}")
+    
+    # 1. 디바이스 조회
+    print(f"🔍 [BACKEND] 데이터베이스에서 디바이스 조회 중...")
     device = crud.device.get(db=db, id=device_id)
     if not device:
+        print(f"❌ [BACKEND] 디바이스를 찾을 수 없음 - device_id: {device_id}")
         raise HTTPException(status_code=404, detail="Device not found")
     
+    print(f"✅ [BACKEND] 디바이스 조회 성공:")
+    print(f"   - ID: {device.id}")
+    print(f"   - 이름: {device.name}")
+    print(f"   - 타입: {device.device_type}")
+    print(f"   - 포트: {device.port}")
+    print(f"   - 보드레이트: {device.baud_rate}")
+    print(f"   - 현재 상태: {device.connection_status}")
+    
+    # 2. 시리얼 서비스 연결 시도
+    print(f"🔌 [BACKEND] 시리얼 서비스 연결 시도 중...")
     success = serial_service.connect_device(device)
+    print(f"📡 [BACKEND] 시리얼 서비스 연결 결과: {success}")
     
     if success:
-        # 데이터베이스의 연결 상태 업데이트
+        print(f"✅ [BACKEND] 디바이스 연결 성공!")
+        
+        # 3. 데이터베이스의 연결 상태 업데이트
+        print(f"💾 [BACKEND] 데이터베이스 연결 상태 업데이트 중...")
         from app.models.device import ConnectionStatus
         device_update = {"connection_status": ConnectionStatus.CONNECTED}
         crud.device.update(db=db, db_obj=device, obj_in=device_update)
+        print(f"✅ [BACKEND] 데이터베이스 상태 업데이트 완료: CONNECTED")
         
-        return {"success": True, "message": f"Connected to device {device.name}"}
+        response = {"success": True, "message": f"Connected to device {device.name}"}
+        print(f"📤 [BACKEND] 성공 응답 전송: {response}")
+        return response
     else:
+        print(f"❌ [BACKEND] 디바이스 연결 실패!")
+        
+        # 4. 에러 상태로 데이터베이스 업데이트
+        print(f"💾 [BACKEND] 데이터베이스 에러 상태 업데이트 중...")
+        from app.models.device import ConnectionStatus
         device_update = {"connection_status": ConnectionStatus.ERROR}
         crud.device.update(db=db, db_obj=device, obj_in=device_update)
-        raise HTTPException(status_code=400, detail="Failed to connect to device")
+        print(f"✅ [BACKEND] 데이터베이스 상태 업데이트 완료: ERROR")
+        
+        error_msg = "Failed to connect to device"
+        print(f"📤 [BACKEND] 에러 응답 전송: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
 
 @router.post("/devices/{device_id}/disconnect")
 def disconnect_device(

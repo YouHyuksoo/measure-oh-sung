@@ -13,7 +13,8 @@
       "Read(//d/**)",
       "Bash(netstat:*)",
       "Bash(findstr:*)",
-      "Bash(.venvScriptspython.exe -m app.db.init_db)"
+      "Bash(.venvScriptspython.exe -m app.db.init_db)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
