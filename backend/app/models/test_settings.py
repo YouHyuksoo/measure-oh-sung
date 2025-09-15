@@ -13,6 +13,10 @@ class TestSettings(Base, TimestampMixin):
     wait_duration_2_to_3 = Column(Float, default=2.0, comment="P2-P3 대기 시간")
     p3_measure_duration = Column(Float, default=5.0, comment="P3 측정 시간")
     
+    # 측정 방식 설정
+    measurement_method = Column(String(20), default="polling", comment="측정 방식 (polling/synchronized)")
+    data_collection_interval = Column(Float, default=0.25, comment="데이터 수집 간격 (초)")
+    
     # 활성 설정 여부 (단일 설정만 활성화)
     is_active = Column(Boolean, default=False, comment="활성 설정 여부")
     

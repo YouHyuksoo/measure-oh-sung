@@ -17,6 +17,7 @@ class SerialCommunicationService:
         self.connections: Dict[int, serial.Serial] = {}  # device_id -> Serial connection
         self.executor = ThreadPoolExecutor(max_workers=10)  # 비동기 시리얼 통신용
         self.lock = threading.Lock()
+        self.simulation_mode = False  # 실제 COM 포트 사용
         
     def connect_device(self, device: Device) -> bool:
         """장비에 연결합니다."""
@@ -31,6 +32,27 @@ class SerialCommunicationService:
         print(f"   - 스톱 비트: {device.stop_bits}")
         print(f"   - 타임아웃: {device.timeout}")
         print(f"   - 흐름 제어: {device.flow_control}")
+        
+        # 시뮬레이션 모드 처리
+        if self.simulation_mode:
+            print(f"🎭 [SERIAL_SERVICE] 시뮬레이션 모드 - 가상 연결 생성")
+            with self.lock:
+                # 가상 연결 객체 생성
+                class MockSerial:
+                    def __init__(self):
+                        self.is_open = True
+                        self.port = "SIMULATION"  # 시뮬레이션 모드 식별용
+                        self.baudrate = device.baud_rate
+                    def write(self, data):
+                        print(f"📤 [SIMULATION] 전송: {data}")
+                    def readline(self):
+                        return b"YOKOGAWA,WT310E,12345678,1.00\n"
+                    def close(self):
+                        self.is_open = False
+                
+                self.connections[device.id] = MockSerial()
+                print(f"✅ [SERIAL_SERVICE] 시뮬레이션 연결 완료")
+                return True
         
         try:
             with self.lock:
@@ -280,6 +302,10 @@ class SerialCommunicationService:
         except Exception as e:
             logger.error(f"Error listing serial ports: {e}")
             return []
+    
+    def get_connection(self, device_id: int) -> Optional[serial.Serial]:
+        """연결된 시리얼 포트 객체를 반환합니다."""
+        return self.connections.get(device_id)
     
     def test_connection(self, device: Device) -> Dict[str, Any]:
         """연결 테스트를 수행합니다."""

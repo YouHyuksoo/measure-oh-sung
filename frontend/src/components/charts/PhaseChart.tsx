@@ -185,7 +185,7 @@ export function PhaseChart({
         });
       }
     },
-    [setStatistics]
+    [setStatistics, limits]
   );
 
   // 데이터 업데이트
@@ -284,7 +284,7 @@ export function PhaseChart({
             <CardDescription>
               {limits
                 ? `측정 범위: ${limits.lower} ~ ${limits.upper}`
-                : "단계별 측정값 추이"}
+                : "단계별 LSL/USL"}
             </CardDescription>
           </div>
           <div className="flex gap-1">

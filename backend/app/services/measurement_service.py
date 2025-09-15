@@ -1,12 +1,14 @@
-import asyncio
 import json
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.websocket.connection_manager import manager
+from app.websocket.queue import message_queue
 from app import crud, schemas
 from app.models.measurement import MeasurementPhase, MeasurementResult
+
+logger = logging.getLogger(__name__)
 
 class MeasurementService:
     """측정 데이터 처리 및 실시간 스트리밍 서비스"""
@@ -38,14 +40,13 @@ class MeasurementService:
         
         self.active_measurements[session_id] = measurement_data
         
-        # 클라이언트에게 세션 시작 알림
-        await manager.broadcast_json_to_session({
+        message_queue.put({
             "type": "measurement_session_started",
             "session_id": session_id,
             "barcode": barcode,
             "inspection_model_id": inspection_model_id,
             "timestamp": datetime.now().isoformat()
-        }, session_id)
+        })
         
     async def start_phase_measurement(
         self,
@@ -63,13 +64,12 @@ class MeasurementService:
         measurement_data["phases"][phase]["status"] = "measuring"
         measurement_data["phases"][phase]["start_time"] = datetime.now()
         
-        # 클라이언트에게 단계 시작 알림
-        await manager.broadcast_json_to_session({
+        message_queue.put({
             "type": "phase_started",
             "session_id": session_id,
             "phase": phase,
             "timestamp": datetime.now().isoformat()
-        }, session_id)
+        })
         
     async def add_measurement_data(
         self,
@@ -86,22 +86,20 @@ class MeasurementService:
         measurement_data = self.active_measurements[session_id]
         phase_data = measurement_data["phases"][phase]
         
-        # 데이터 추가
         data_point = {
             "value": value,
             "timestamp": datetime.now().isoformat()
         }
         phase_data["data"].append(data_point)
         
-        # 실시간으로 클라이언트에 전송
-        await manager.broadcast_json_to_session({
+        message_queue.put({
             "type": "measurement_data",
             "session_id": session_id,
             "phase": phase,
             "data": data_point,
             "total_points": len(phase_data["data"]),
             "timestamp": datetime.now().isoformat()
-        }, session_id)
+        })
         
     async def complete_phase_measurement(
         self,
@@ -119,19 +117,14 @@ class MeasurementService:
         measurement_data = self.active_measurements[session_id]
         phase_data = measurement_data["phases"][phase]
         
-        # 측정 데이터 통계 계산
         values = [point["value"] for point in phase_data["data"]]
         
         if values:
             min_value = min(values)
             max_value = max(values)
             avg_value = sum(values) / len(values)
-            
-            # 표준편차 계산
             variance = sum((x - avg_value) ** 2 for x in values) / len(values)
             std_deviation = variance ** 0.5
-            
-            # 합불 판정
             result = MeasurementResult.PASS
             for value in values:
                 if value < lower_limit or value > upper_limit:
@@ -141,7 +134,6 @@ class MeasurementService:
             min_value = max_value = avg_value = std_deviation = 0
             result = MeasurementResult.ERROR
             
-        # 측정 데이터 저장
         measurement_create = schemas.MeasurementCreate(
             barcode=measurement_data["barcode"],
             session_id=session_id,
@@ -162,13 +154,11 @@ class MeasurementService:
         
         saved_measurement = crud.measurement.create(db=db, obj_in=measurement_create)
         
-        # 단계 완료 상태 업데이트
         phase_data["status"] = "completed"
         phase_data["result"] = result
         phase_data["measurement_id"] = saved_measurement.id
         
-        # 클라이언트에게 단계 완료 알림
-        await manager.broadcast_json_to_session({
+        message_queue.put({
             "type": "phase_completed",
             "session_id": session_id,
             "phase": phase,
@@ -186,7 +176,7 @@ class MeasurementService:
             },
             "measurement_id": saved_measurement.id,
             "timestamp": datetime.now().isoformat()
-        }, session_id)
+        })
         
         return saved_measurement
         
@@ -198,15 +188,13 @@ class MeasurementService:
             
         measurement_data = self.active_measurements[session_id]
         
-        # 전체 결과 판정
         overall_result = MeasurementResult.PASS
         for phase_name, phase_data in measurement_data["phases"].items():
             if phase_data.get("result") != MeasurementResult.PASS:
                 overall_result = MeasurementResult.FAIL
                 break
                 
-        # 클라이언트에게 세션 완료 알림
-        await manager.broadcast_json_to_session({
+        message_queue.put({
             "type": "measurement_session_completed",
             "session_id": session_id,
             "overall_result": overall_result,
@@ -215,12 +203,50 @@ class MeasurementService:
                 for phase, data in measurement_data["phases"].items()
             },
             "timestamp": datetime.now().isoformat()
-        }, session_id)
+        })
         
-        # 세션 데이터 정리
         del self.active_measurements[session_id]
         
         return overall_result
+    
+    async def create_measurement(self, measurement_data: Dict[str, Any], db: Session):
+        """측정 데이터를 데이터베이스에 저장합니다."""
+        
+        try:
+            measurement_create = schemas.MeasurementCreate(
+                barcode=measurement_data.get("barcode", ""),
+                session_id=measurement_data.get("session_id", ""),
+                inspection_model_id=measurement_data.get("inspection_model_id", 0),
+                phase=measurement_data.get("phase"),
+                raw_data=measurement_data.get("raw_data", []),
+                min_value=measurement_data.get("min_value", 0.0),
+                max_value=measurement_data.get("max_value", 0.0),
+                avg_value=measurement_data.get("avg_value", 0.0),
+                std_deviation=measurement_data.get("std_deviation", 0.0),
+                result=measurement_data.get("result"),
+                lower_limit=measurement_data.get("lower_limit", 0.0),
+                upper_limit=measurement_data.get("upper_limit", 0.0),
+                start_time=measurement_data.get("start_time"),
+                end_time=measurement_data.get("end_time"),
+                duration=measurement_data.get("duration", 0.0)
+            )
+            
+            saved_measurement = crud.measurement.create(db=db, obj_in=measurement_create)
+            
+            message_queue.put({
+                "type": "measurement_saved",
+                "measurement_id": saved_measurement.id,
+                "session_id": measurement_data.get("session_id"),
+                "phase": measurement_data.get("phase"),
+                "result": measurement_data.get("result"),
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            return saved_measurement
+            
+        except Exception as e:
+            logger.error(f"측정 데이터 저장 실패: {e}")
+            raise e
 
 # 전역 측정 서비스 인스턴스
 measurement_service = MeasurementService()

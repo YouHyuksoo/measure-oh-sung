@@ -113,45 +113,9 @@ export default function InspectionPage() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 바코드 스캔 메시지 처리
-  useEffect(() => {
-    if (store.ws && store.wsStatus === "connected") {
-      const handleMessage = (event: MessageEvent) => {
-        try {
-          const message = JSON.parse(event.data);
-          console.log("🔍 [INSPECTION] WebSocket 메시지 수신:", message);
+  // 바코드 스캔은 useInspectionStore에서 처리됨
 
-          if (message.type === "barcode_scan") {
-            const barcode = message.data?.barcode;
-            if (barcode) {
-              console.log("📱 [INSPECTION] 바코드 스캔 감지:", barcode);
-              store.setBarcode(barcode);
-
-              // 자동으로 검사 시작 (모델이 선택되어 있고 설비가 연결된 경우)
-              if (
-                store.selectedModelId &&
-                store.powerMeterStatus === "connected"
-              ) {
-                console.log("🚀 [INSPECTION] 자동 검사 시작");
-                store.startInspection(barcode);
-              }
-            }
-          }
-        } catch (error) {
-          console.error("❌ [INSPECTION] WebSocket 메시지 파싱 오류:", error);
-        }
-      };
-
-      store.ws.addEventListener("message", handleMessage);
-
-      return () => {
-        store.ws?.removeEventListener("message", handleMessage);
-      };
-    }
-
-    // 조건이 맞지 않을 때도 cleanup 함수 반환
-    return () => {};
-  }, [store.ws, store.wsStatus, store.setBarcode]);
+  // 장비 정보는 store에서 가져옴
 
   if (!isMounted) {
     return null; // or a loading spinner
@@ -160,7 +124,7 @@ export default function InspectionPage() {
   // --- UI Event Handlers ---
   const handleStartInspection = () => {
     if (store.currentBarcode) {
-      store.startInspection(store.currentBarcode);
+      store.startSequentialInspection(store.currentBarcode);
     }
   };
 
@@ -210,7 +174,18 @@ export default function InspectionPage() {
               <div>
                 <Label>전력측정설비</Label>
                 <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
-                  <StatusBadge status={store.powerMeterStatus} />
+                  <div className="flex flex-col">
+                    <StatusBadge status={store.powerMeterStatus} />
+                    {store.connectedPowerMeter && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        <div>포트: {store.connectedPowerMeter.port}</div>
+                        <div>
+                          보드레이트:{" "}
+                          {store.connectedPowerMeter.baud_rate || "N/A"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   {store.powerMeterStatus !== "connected" && (
                     <Button
                       onClick={store.connectPowerMeter}
@@ -233,13 +208,24 @@ export default function InspectionPage() {
               <div>
                 <Label>바코드 스캐너</Label>
                 <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
-                  <StatusBadge
-                    status={
-                      store.isBarcodeScannerListening
-                        ? "connected"
-                        : store.barcodeScannerStatus
-                    }
-                  />
+                  <div className="flex flex-col">
+                    <StatusBadge
+                      status={
+                        store.isBarcodeScannerListening
+                          ? "connected"
+                          : store.barcodeScannerStatus
+                      }
+                    />
+                    {store.connectedBarcodeScanner && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        <div>포트: {store.connectedBarcodeScanner.port}</div>
+                        <div>
+                          보드레이트:{" "}
+                          {store.connectedBarcodeScanner.baud_rate || "N/A"}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   {store.barcodeScannerStatus !== "connected" && (
                     <Button
                       onClick={store.connectBarcodeScanner}
@@ -326,6 +312,33 @@ export default function InspectionPage() {
                     <span>바코드 스캐너 대기 중...</span>
                   </div>
                 )}
+              </div>
+
+              {/* Real-time Connection Status */}
+              <div>
+                <Label>실시간 연결 상태</Label>
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                  <div className="flex flex-col">
+                    <StatusBadge status={store.sseStatus} />
+                    <div className="text-xs text-gray-600 mt-1">
+                      {store.sseStatus === "connected"
+                        ? "실시간 연결됨"
+                        : "연결 안됨"}
+                    </div>
+                  </div>
+                  {store.sseStatus !== "connected" && (
+                    <Button
+                      onClick={() => {
+                        console.log("🔄 [UI] SSE 재연결 시도");
+                        store._connectSse();
+                      }}
+                      size="sm"
+                      variant="outline"
+                    >
+                      재연결
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {/* Control Buttons */}
@@ -437,41 +450,55 @@ export default function InspectionPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>측정 이력</CardTitle>
+              <CardTitle>설비 통신 로그</CardTitle>
               <CardDescription>
-                현재 세션의 측정 기록 ({store.measurementHistory.length}건)
+                전력측정 설비와 주고받은 메시지 ({store.messageLogs.length}건)
               </CardDescription>
             </CardHeader>
             <CardContent className="max-h-64 overflow-y-auto">
-              {store.measurementHistory
-                .slice()
-                .reverse()
-                .map((m, i) => (
-                  <div
-                    key={i}
-                    className="flex justify-between items-center p-2 border-b"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Badge variant="outline">{m.barcode}</Badge>
-                      <span className="font-medium">{m.phase}</span>
-                      <span>
-                        {m.value} {m.unit}
-                      </span>
+              {store.messageLogs.length === 0 ? (
+                <div className="text-center text-muted-foreground py-4">
+                  아직 통신 메시지가 없습니다
+                </div>
+              ) : (
+                store.messageLogs
+                  .slice()
+                  .reverse()
+                  .map((log, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-3 p-2 border-b text-sm"
+                    >
+                      <div className="flex-shrink-0">
+                        <Badge
+                          variant={
+                            log.direction === "OUT" ? "default" : "secondary"
+                          }
+                          className={
+                            log.direction === "OUT"
+                              ? "bg-blue-500 text-white"
+                              : "bg-green-500 text-white"
+                          }
+                        >
+                          {log.direction === "OUT" ? "→" : "←"}
+                        </Badge>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">
+                            {log.type}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(log.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <div className="font-mono text-xs break-all">
+                          {log.content}
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant={
-                          m.result === "PASS" ? "success" : "destructive"
-                        }
-                      >
-                        {m.result}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(m.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  ))
+              )}
             </CardContent>
           </Card>
         </div>

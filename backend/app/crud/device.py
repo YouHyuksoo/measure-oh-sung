@@ -22,5 +22,11 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         return db.query(Device).filter(
             Device.connection_status == ConnectionStatus.CONNECTED
         ).all()
+    
+    def get_power_meter(self, db: Session) -> Optional[Device]:
+        """전력측정 설비를 조회합니다."""
+        return db.query(Device).filter(
+            Device.device_type == DeviceType.POWER_METER
+        ).first()
 
 device = CRUDDevice(Device)

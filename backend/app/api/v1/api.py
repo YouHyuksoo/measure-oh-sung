@@ -7,8 +7,7 @@ from app.api.v1.endpoints import (
     devices, 
     system_logs,
     serial_communication,
-    inspection_routine,
-    websocket
+    inspection_routine
 )
 
 api_router = APIRouter()
@@ -21,4 +20,3 @@ api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(system_logs.router, prefix="/system-logs", tags=["system-logs"])
 api_router.include_router(serial_communication.router, prefix="/serial", tags=["serial-communication"])
 api_router.include_router(inspection_routine.router, prefix="/inspection", tags=["inspection-routine"])
-api_router.include_router(websocket.router, tags=["websocket"])

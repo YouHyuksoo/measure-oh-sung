@@ -13,7 +13,7 @@ except ImportError:
 
 LF = "\n"
 OK = "OK"
-BANNER = "PWR-EMU,MODEL-PE200,FW1.1.0,SN000001"
+BANNER = "YOKOGAWA,WT310E,12345678,1.00"
 
 ERR_SYNTAX = 'ERR,-100,"Syntax error"'
 ERR_RANGE  = 'ERR,-200,"Parameter out of range"'
@@ -111,11 +111,6 @@ class RS232VIFPowerEmu:
     def __init__(self, port, baud=115200):
         self.port_name = port
         self.baud = baud
-        self.ser = serial.Serial(
-            port=port, baudrate=baud,
-            bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE,
-            timeout=0.1, xonxoff=False, rtscts=False, dsrdtr=False
-        )
         self.model = VIFPowerModel()
         self.rate_ms = 100
         self.state = STATE_READY
@@ -123,12 +118,36 @@ class RS232VIFPowerEmu:
         self.running = True
         self.lock = threading.Lock()
         self.err_stack = []  # 간단한 에러 스택
+        
+        # 파일 기반 통신으로 변경
+        self.input_file = f"{port}_input.txt"
+        self.output_file = f"{port}_output.txt"
+        self.ser = None
+        
+        try:
+            # 실제 시리얼 포트 시도
+            self.ser = serial.Serial(
+                port=port, baudrate=baud,
+                bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE,
+                timeout=0.1, xonxoff=False, rtscts=False, dsrdtr=False
+            )
+            print(f"✅ 실제 시리얼 포트 연결 성공: {port}")
+        except Exception as e:
+            print(f"⚠️ 시리얼 포트 연결 실패: {e}")
+            print(f"📁 파일 기반 통신으로 전환: {self.input_file} <-> {self.output_file}")
+            # 파일 초기화
+            with open(self.input_file, 'w') as f:
+                f.write("")
+            with open(self.output_file, 'w') as f:
+                f.write("")
 
     # ---- 직렬 헬퍼
     def _writeline(self, s):
         try:
             self.ser.write((s + LF).encode("utf-8"))
-        except Exception:
+            print(f"[DEBUG] 응답 전송: '{s}'")
+        except Exception as e:
+            print(f"[ERROR] 응답 전송 실패: {e}")
             pass
 
     def _push_err(self, code_msg):
@@ -157,9 +176,12 @@ class RS232VIFPowerEmu:
         if not s:
             return
         u = s.upper()
+        
+        # 디버그 로그 추가
+        print(f"[DEBUG] 수신된 명령어: '{s}' -> '{u}'")
 
         try:
-            # 식별/상태/에러
+            # WT310 식별/상태/에러 명령어
             if u == "*IDN?":
                 self._writeline(BANNER)
             elif u == "*RST":
@@ -173,8 +195,44 @@ class RS232VIFPowerEmu:
                     self._writeline('0,"No error"')
             elif u == "STAT?":
                 self._writeline(self.state)
+            
+            # WT310 통신 제어 명령어
+            elif u == ":COMMUNICATE:REMOTE ON":
+                self._writeline(OK)
+            elif u == ":COMMUNICATE:REMOTE OFF":
+                self._writeline(OK)
+            elif u == ":COMMUNICATE:WAIT 1":
+                # 갱신 이벤트 대기 (실제로는 즉시 응답)
+                self._writeline(OK)
+            
+            # WT310 데이터 포맷 설정
+            elif u.startswith(":NUMERIC:FORMAT"):
+                if "ASCII" in u:
+                    self._writeline(OK)
+                elif "FLOAT" in u:
+                    self._writeline(OK)
+                else:
+                    self._writeline(ERR_SYNTAX)
+            
+            # WT310 측정 항목 설정
+            elif u == ":NUMERIC:NORMAL:CLEAR ALL":
+                self._writeline(OK)
+            elif u.startswith(":NUMERIC:NORMAL:ITEM1 P,"):
+                self._writeline(OK)
+            elif u == ":NUMERIC:NORMAL:NUMBER 1":
+                self._writeline(OK)
+            
+            # WT310 측정값 질의
+            elif u == ":NUMERIC:NORMAL:VALUE?":
+                with self.lock:
+                    p = self.model.lastP
+                self._writeline(f"{p:.6E}")
+            
+            # WT310 상태 레지스터 질의
+            elif u == ":STATUS:EESR?":
+                self._writeline("0")
 
-            # 제어
+            # WT310 제어 명령어
             elif u == "INIT":
                 with self.lock:
                     self.state = STATE_RUN
@@ -183,8 +241,8 @@ class RS232VIFPowerEmu:
                 with self.lock:
                     self.state = STATE_READY
                 self._writeline(OK)
-
-            # 측정 질의
+            
+            # WT310 측정 질의 (호환성을 위해 유지)
             elif u == "MEAS:POW?":
                 with self.lock:
                     p = self.model.lastP
@@ -214,100 +272,6 @@ class RS232VIFPowerEmu:
                         snap["P"], snap["V"], snap["I"], snap["F"], snap["ENER"], st
                     )
                 )
-
-            # 설정
-            elif u.startswith("CONF:RATE"):
-                m = re.match(r"(?i)^CONF:RATE\s+(\d+)\s*ms$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                val = int(m.group(1))
-                if 20 <= val <= 10000:
-                    with self.lock: self.rate_ms = val
-                    self._writeline(OK)
-                else:
-                    self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:PF"):
-                m = re.match(r"(?i)^CONF:PF\s+([0-1](?:\.\d+)?)$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                pf = float(m.group(1))
-                with self.lock:
-                    if self.model.set_pf(pf): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:V:BASE"):
-                m = re.match(r"(?i)^CONF:V:BASE\s+([0-9]+(?:\.[0-9]+)?)V$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                val = float(m.group(1))
-                with self.lock:
-                    if self.model.set_base("V", val): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:I:BASE"):
-                m = re.match(r"(?i)^CONF:I:BASE\s+([0-9]+(?:\.[0-9]+)?)A$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                val = float(m.group(1))
-                with self.lock:
-                    if self.model.set_base("I", val): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:FREQ:BASE"):
-                m = re.match(r"(?i)^CONF:FREQ:BASE\s+([0-9]+(?:\.[0-9]+)?)Hz$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                val = float(m.group(1))
-                with self.lock:
-                    if self.model.set_base("F", val): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:V:RANGE"):
-                m = re.match(r"(?i)^CONF:V:RANGE\s+(150|300|600|1000)V$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                rng = int(m.group(1))
-                with self.lock:
-                    if self.model.set_range("V", rng): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:I:RANGE"):
-                m = re.match(r"(?i)^CONF:I:RANGE\s+(1|5|10|20|100)A$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                rng = int(m.group(1))
-                with self.lock:
-                    if self.model.set_range("I", rng): self._writeline(OK)
-                    else: self._writeline(ERR_RANGE)
-
-            elif u.startswith("CONF:NOISE"):
-                # 예: CONF:NOISE V,0.5; I,1.0; F,0.05
-                try:
-                    v = i = f = None
-                    # 토크나이즈
-                    body = s.split(None, 1)[1]
-                    parts = [p.strip() for p in body.split(";")]
-                    for p in parts:
-                        if not p: continue
-                        k, val = [x.strip() for x in p.split(",", 1)]
-                        if k.upper() == "V": v = float(val)
-                        elif k.upper() == "I": i = float(val)
-                        elif k.upper() == "F": f = float(val)
-                    with self.lock:
-                        if self.model.set_noise(v, i, f): self._writeline(OK)
-                        else: self._writeline(ERR_RANGE)
-                except Exception:
-                    self._writeline(ERR_SYNTAX)
-
-            elif u == "CONF:ENER:ZERO":
-                with self.lock:
-                    self.model.zero_energy()
-                self._writeline(OK)
-
-            elif u.startswith("CONF:STREAM"):
-                m = re.match(r"(?i)^CONF:STREAM\s+(ON|OFF)$", s)
-                if not m: return self._writeline(ERR_SYNTAX)
-                onoff = m.group(1).upper()
-                with self.lock:
-                    self.stream_on = (onoff == "ON")
-                if self.stream_on:
-                    # 헤더 1회 전송
-                    self._writeline("ts, pow_w, volt_v, curr_a, freq_hz, stat")
-                self._writeline(OK)
 
             else:
                 self._writeline(ERR_SYNTAX)
@@ -356,18 +320,27 @@ class RS232VIFPowerEmu:
 def main():
     if len(sys.argv) < 2:
         print("사용법: python rs232_power_vif_emulator.py <COM포트> [baud]")
-        print("예시 : python rs232_power_vif_emulator.py COM9 115200")
-        return
-    port = sys.argv[1]
-    baud = int(sys.argv[2]) if len(sys.argv) >= 3 else 115200
-    emu = RS232VIFPowerEmu(port, baud)
-    print(f"RS-232 VIF Power Emulator: {port} @ {baud} (LF 종료, 8-N-1, flowcontrol None)")
+        print("예시 : python rs232_power_vif_emulator.py COM3 115200")
+        print("기본값: COM3, 115200")
+        port = "COM3"
+        baud = 115200
+    else:
+        port = sys.argv[1]
+        baud = int(sys.argv[2]) if len(sys.argv) >= 3 else 115200
+    
     try:
+        emu = RS232VIFPowerEmu(port, baud)
+        print(f"RS-232 VIF Power Emulator: {port} @ {baud} (LF 종료, 8-N-1, flowcontrol None)")
         emu.serve()
+    except serial.SerialException as e:
+        print(f"COM 포트 오류: {e}")
+        print("가상 COM 포트를 생성하거나 다른 포트를 사용하세요.")
+        print("또는 백엔드에서 시뮬레이션 모드를 사용하세요.")
     except KeyboardInterrupt:
         pass
     finally:
-        emu.close()
+        if 'emu' in locals():
+            emu.close()
 
 if __name__ == "__main__":
     main()

@@ -7,7 +7,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 from fastapi import FastAPI  # pyright: ignore[reportMissingImports]
 from fastapi.middleware.cors import CORSMiddleware  # pyright: ignore[reportMissingImports]
 from app.api.v1.api import api_router
-from app.api.v1.endpoints.websocket import router as websocket_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -28,9 +27,6 @@ app.add_middleware(
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
-
-# Include WebSocket router (without prefix)
-app.include_router(websocket_router)
 
 @app.get("/")
 async def root():

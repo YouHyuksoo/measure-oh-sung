@@ -1,3 +1,4 @@
+from app.websocket.queue import message_queue
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
@@ -1925,19 +1926,26 @@ async def barcode_listening_task():
                                 
                                 print(f"바코드 수신: {barcode_data}")
                                 
-                                # WebSocket을 통해 프론트엔드에 실시간 전송
-                                from app.api.v1.endpoints.websocket import broadcast_barcode_data
-                                await broadcast_barcode_data(barcode_data)
+                                # SSE 큐를 통해 프론트엔드에 실시간 전송
+                                message_queue.put({
+                                    "type": "barcode_scanned",
+                                    "timestamp": datetime.now().isoformat(),
+                                    "data": {"barcode": barcode_data}
+                                })
                                 
                         except UnicodeDecodeError:
                             # 바이너리 데이터인 경우
                             print(f"바이너리 바코드 데이터 수신: {data.hex()}")
-                            _barcode_state["last_barcode"] = f"Binary: {data.hex()}"
+                            hex_data = f"Binary: {data.hex()}"
+                            _barcode_state["last_barcode"] = hex_data
                             _barcode_state["scan_count"] += 1
                             
-                            # 바이너리 데이터도 WebSocket으로 전송
-                            from app.api.v1.endpoints.websocket import broadcast_barcode_data
-                            await broadcast_barcode_data(f"Binary: {data.hex()}")
+                            # 바이너리 데이터도 SSE 큐로 전송
+                            message_queue.put({
+                                "type": "barcode_scanned",
+                                "timestamp": datetime.now().isoformat(),
+                                "data": {"barcode": hex_data}
+                            })
             else:
                 # 연결이 끊어진 경우 태스크 종료
                 break

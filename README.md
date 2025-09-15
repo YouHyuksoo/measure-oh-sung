@@ -72,7 +72,6 @@ start_frontend.bat
 
 ```bash
 # 가상환경 활성화 후 실행
-cd backend
 venv\Scripts\activate
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 

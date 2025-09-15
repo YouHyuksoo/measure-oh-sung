@@ -11,6 +11,15 @@ class CRUDTestSettings(CRUDBase[TestSettings, TestSettingsCreate, TestSettingsUp
         return db.query(TestSettings).filter(
             TestSettings.is_active == True
         ).first()
+    
+    def get_active_global(self, db: Session) -> Optional[TestSettings]:
+        """활성화된 전역 테스트 설정을 가져옵니다."""
+        return db.query(TestSettings).filter(
+            and_(
+                TestSettings.is_active == True,
+                TestSettings.inspection_model_id == None
+            )
+        ).first()
 
     def get_by_model(self, db: Session, *, inspection_model_id: int) -> List[TestSettings]:
         """특정 검사 모델의 테스트 설정들을 조회합니다."""

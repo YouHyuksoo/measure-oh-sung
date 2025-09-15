@@ -8,6 +8,8 @@ class TestSettingsBase(BaseModel):
     p2_measure_duration: float
     wait_duration_2_to_3: float
     p3_measure_duration: float
+    measurement_method: str = "polling"
+    data_collection_interval: float = 0.25
     is_active: Optional[bool] = False
     name: str
     description: Optional[str] = None
@@ -24,6 +26,8 @@ class TestSettingsUpdate(BaseModel):
     p2_measure_duration: Optional[float] = None
     wait_duration_2_to_3: Optional[float] = None
     p3_measure_duration: Optional[float] = None
+    measurement_method: Optional[str] = None
+    data_collection_interval: Optional[float] = None
     is_active: Optional[bool] = None
     name: Optional[str] = None
     description: Optional[str] = None
