@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -19,6 +20,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   BarChart3,
   Search,
@@ -31,6 +43,8 @@ import {
   CheckCircle,
   AlertCircle,
   RefreshCw,
+  Trash2,
+  TrashIcon,
 } from "lucide-react";
 import { apiClient } from "@/lib/api";
 
@@ -38,11 +52,12 @@ interface Measurement {
   id: number;
   barcode: string;
   phase: "P1" | "P2" | "P3";
-  device_id: number;
+  device_id?: number;
   device_name?: string;
-  value: number;
-  unit: string;
-  timestamp: string;
+  avg_value: number;
+  unit?: string;
+  created_at: string;
+  start_time?: string;
   result: "PASS" | "FAIL" | "PENDING";
   inspection_model_id: number;
   inspection_model_name?: string;
@@ -78,6 +93,8 @@ export default function MeasurementsPage() {
   const [filterPhase, setFilterPhase] = useState<"ALL" | "P1" | "P2" | "P3">(
     "ALL"
   );
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
 
   // 측정 데이터 로드
   const loadMeasurements = useCallback(async () => {
@@ -91,6 +108,10 @@ export default function MeasurementsPage() {
       const measurements = Array.isArray(response)
         ? response
         : response.measurements || [];
+
+      // 실제 데이터 구조 확인을 위한 로그
+      console.log("🔍 실제 측정 데이터 구조:", measurements[0]);
+
       setMeasurements(measurements);
       calculateStats(measurements);
     } catch (error) {
@@ -103,18 +124,25 @@ export default function MeasurementsPage() {
   // 통계 계산
   const calculateStats = (data: Measurement[]) => {
     const today = new Date().toDateString();
-    const todayMeasurements = data.filter(
-      (m) => new Date(m.timestamp).toDateString() === today
-    );
+    const todayMeasurements = data.filter((m) => {
+      const timeStr = m.start_time || m.created_at;
+      if (!timeStr) return false;
+      try {
+        return new Date(timeStr).toDateString() === today;
+      } catch {
+        return false;
+      }
+    });
 
     const passCount = data.filter((m) => m.result === "PASS").length;
     const failCount = data.filter((m) => m.result === "FAIL").length;
     const pendingCount = data.filter((m) => m.result === "PENDING").length;
 
-    const avgValue =
-      data.length > 0
-        ? data.reduce((sum, m) => sum + m.value, 0) / data.length
-        : 0;
+    // 유효한 숫자 값만 필터링
+    const validValues = data.filter(m => m.avg_value != null && !isNaN(m.avg_value)).map(m => m.avg_value);
+    const avgValue = validValues.length > 0
+      ? validValues.reduce((sum, val) => sum + val, 0) / validValues.length
+      : 0;
 
     setStats({
       total: data.length,
@@ -122,7 +150,7 @@ export default function MeasurementsPage() {
       fail: failCount,
       pending: pendingCount,
       today: todayMeasurements.length,
-      avgValue: parseFloat(avgValue.toFixed(2)),
+      avgValue: isNaN(avgValue) ? 0 : parseFloat(avgValue.toFixed(2)),
     });
   };
 
@@ -207,15 +235,94 @@ export default function MeasurementsPage() {
     }
   };
 
+  // 날짜 포맷팅 (invalid date 방지)
+  const formatTimestamp = (measurement: Measurement) => {
+    // start_time을 우선적으로 사용, 없으면 created_at 사용
+    const timeStr = measurement.start_time || measurement.created_at;
+
+    if (!timeStr) {
+      return "시간 정보 없음";
+    }
+
+    try {
+      const date = new Date(timeStr);
+      if (isNaN(date.getTime())) {
+        return "유효하지 않은 시간";
+      }
+      return date.toLocaleString("ko-KR");
+    } catch (error) {
+      return "유효하지 않은 시간";
+    }
+  };
+
+  // 개별 삭제
+  const deleteMeasurement = async (id: number) => {
+    try {
+      setIsLoading(true);
+      await apiClient.deleteMeasurement(id);
+      await loadMeasurements();
+    } catch (error) {
+      console.error("측정 데이터 삭제 오류:", error);
+      alert("삭제 중 오류가 발생했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 일괄 삭제
+  const bulkDeleteMeasurements = async () => {
+    if (selectedIds.size === 0) {
+      alert("삭제할 항목을 선택해주세요.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const idsToDelete = Array.from(selectedIds);
+      await apiClient.bulkDeleteMeasurements(idsToDelete);
+      setSelectedIds(new Set());
+      setSelectAll(false);
+      await loadMeasurements();
+    } catch (error) {
+      console.error("일괄 삭제 오류:", error);
+      alert("삭제 중 오류가 발생했습니다.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 전체 선택/해제
+  const handleSelectAll = (checked: boolean) => {
+    setSelectAll(checked);
+    if (checked) {
+      const allIds = new Set(filteredMeasurements.map((m) => m.id));
+      setSelectedIds(allIds);
+    } else {
+      setSelectedIds(new Set());
+    }
+  };
+
+  // 개별 선택/해제
+  const handleSelectItem = (id: number, checked: boolean) => {
+    const newSelectedIds = new Set(selectedIds);
+    if (checked) {
+      newSelectedIds.add(id);
+    } else {
+      newSelectedIds.delete(id);
+      setSelectAll(false);
+    }
+    setSelectedIds(newSelectedIds);
+  };
+
   // 데이터 내보내기
   const exportData = () => {
     const dataToExport = filteredMeasurements.map((m) => ({
       바코드: m.barcode,
       측정단계: m.phase,
-      측정값: m.value,
-      단위: m.unit,
+      측정값: m.avg_value,
+      단위: m.unit || "",
       결과: m.result,
-      측정시간: new Date(m.timestamp).toLocaleString("ko-KR"),
+      측정시간: formatTimestamp(m),
     }));
 
     const csv = [
@@ -303,7 +410,9 @@ export default function MeasurementsPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.avgValue}</div>
+            <div className="text-2xl font-bold">
+              {isNaN(stats.avgValue) ? "0.00" : stats.avgValue.toString()}
+            </div>
             <p className="text-xs text-muted-foreground">전체 평균값</p>
           </CardContent>
         </Card>
@@ -386,6 +495,35 @@ export default function MeasurementsPage() {
               <Button onClick={exportData} variant="outline" size="icon">
                 <Download className="h-4 w-4" />
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    disabled={selectedIds.size === 0}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>일괄 삭제 확인</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      선택된 {selectedIds.size}개의 측정 데이터를 삭제하시겠습니까?
+                      이 작업은 되돌릴 수 없습니다.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>취소</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={bulkDeleteMeasurements}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      삭제
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
         </CardContent>
@@ -413,12 +551,19 @@ export default function MeasurementsPage() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b">
+                    <th className="text-left p-3 font-medium">
+                      <Checkbox
+                        checked={selectAll}
+                        onCheckedChange={handleSelectAll}
+                      />
+                    </th>
                     <th className="text-left p-3 font-medium">바코드</th>
                     <th className="text-left p-3 font-medium">단계</th>
                     <th className="text-left p-3 font-medium">측정값</th>
                     <th className="text-left p-3 font-medium">결과</th>
                     <th className="text-left p-3 font-medium">측정시간</th>
                     <th className="text-left p-3 font-medium">장비</th>
+                    <th className="text-left p-3 font-medium">작업</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -428,24 +573,57 @@ export default function MeasurementsPage() {
                       className="border-b hover:bg-muted/50"
                     >
                       <td className="p-3">
+                        <Checkbox
+                          checked={selectedIds.has(measurement.id)}
+                          onCheckedChange={(checked) =>
+                            handleSelectItem(measurement.id, checked as boolean)
+                          }
+                        />
+                      </td>
+                      <td className="p-3">
                         <Badge variant="outline">{measurement.barcode}</Badge>
                       </td>
                       <td className="p-3">
                         <Badge variant="secondary">{measurement.phase}</Badge>
                       </td>
                       <td className="p-3 font-mono">
-                        {measurement.value} {measurement.unit}
+                        {measurement.avg_value} {measurement.unit || ""}
                       </td>
                       <td className="p-3">
                         {getResultBadge(measurement.result)}
                       </td>
                       <td className="p-3 text-sm text-muted-foreground">
-                        {new Date(measurement.timestamp).toLocaleString(
-                          "ko-KR"
-                        )}
+                        {formatTimestamp(measurement)}
                       </td>
                       <td className="p-3 text-sm">
-                        장비 #{measurement.device_id}
+                        {measurement.device_id ? `장비 #${measurement.device_id}` : "N/A"}
+                      </td>
+                      <td className="p-3">
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-800">
+                              <TrashIcon className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>삭제 확인</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                바코드 {measurement.barcode}의 {measurement.phase} 측정 데이터를 삭제하시겠습니까?
+                                이 작업은 되돌릴 수 없습니다.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>취소</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteMeasurement(measurement.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                삭제
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </td>
                     </tr>
                   ))}

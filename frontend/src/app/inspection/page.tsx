@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useInspectionStore } from "@/stores/useInspectionStore";
 import {
   Card,
@@ -25,136 +25,256 @@ import {
   Play,
   Square,
   Scan,
-  Database,
   Activity,
   AlertCircle,
-  CheckCircle,
-  Clock,
+  CheckCircle2,
   Power,
+  Target,
 } from "lucide-react";
 import { PhaseChart } from "@/components/charts/PhaseChart";
 
-type BadgeVariant =
-  | "secondary"
-  | "default"
-  | "destructive"
-  | "outline"
-  | "success"
-  | "warning";
+interface MessageLog {
+  timestamp: string;
+  type: "INFO" | "SUCCESS" | "WARNING" | "ERROR";
+  message: string;
+}
 
-const statusStyles: {
-  [key: string]: {
-    variant: BadgeVariant;
-    className?: string;
-    icon: ReactNode;
-    label: string;
-  };
-} = {
-  connecting: {
-    variant: "secondary",
-    className: "bg-blue-500",
-    icon: <Activity className="h-3 w-3 mr-1 animate-spin" />,
-    label: "연결 중",
-  },
-  connected: {
-    variant: "default",
-    className: "bg-green-500",
-    icon: <Power className="h-3 w-3 mr-1" />,
-    label: "연결됨",
-  },
-  disconnected: {
-    variant: "destructive",
-    icon: <AlertCircle className="h-3 w-3 mr-1" />,
-    label: "미연결",
-  },
-  error: {
-    variant: "destructive",
-    icon: <AlertCircle className="h-3 w-3 mr-1" />,
-    label: "오류",
-  },
-};
+type BadgeVariant = "secondary" | "default" | "destructive" | "outline";
 
-// Helper component for status badges
 const StatusBadge = ({ status }: { status: string }) => {
-  const style = statusStyles[status] || {
-    variant: "secondary" as BadgeVariant,
-    label: status,
-    icon: null,
+  const getStatusConfig = () => {
+    switch (status) {
+      case "connecting":
+        return {
+          variant: "secondary" as BadgeVariant,
+          icon: <Activity className="h-3 w-3 mr-1 animate-spin" />,
+          label: "연결 중",
+          className: "bg-blue-500",
+        };
+      case "connected":
+        return {
+          variant: "default" as BadgeVariant,
+          icon: <Power className="h-3 w-3 mr-1" />,
+          label: "연결됨",
+          className: "bg-green-500",
+        };
+      case "error":
+        return {
+          variant: "destructive" as BadgeVariant,
+          icon: <AlertCircle className="h-3 w-3 mr-1" />,
+          label: "오류",
+        };
+      default:
+        return {
+          variant: "destructive" as BadgeVariant,
+          icon: <AlertCircle className="h-3 w-3 mr-1" />,
+          label: "미연결",
+        };
+    }
   };
 
+  const config = getStatusConfig();
   return (
-    <Badge variant={style.variant} className={style.className}>
-      {style.icon}
-      {style.label}
+    <Badge variant={config.variant} className={config.className}>
+      {config.icon}
+      {config.label}
     </Badge>
   );
 };
 
 export default function InspectionPage() {
-  // --- State from Store ---
+  // 각 위상별 데이터를 독립적으로 구독
+  const p1MeasurementHistory = useInspectionStore((state) => state.p1MeasurementHistory);
+  const p2MeasurementHistory = useInspectionStore((state) => state.p2MeasurementHistory);
+  const p3MeasurementHistory = useInspectionStore((state) => state.p3MeasurementHistory);
+
+  // 기타 필요한 상태들
   const store = useInspectionStore();
   const [isMounted, setIsMounted] = useState(false);
+  const [logs, setLogs] = useState<MessageLog[]>([]);
 
-  // --- Effects ---
   useEffect(() => {
     setIsMounted(true);
     store.initialize();
 
-    // 브라우저 탭을 닫을 때만 연결 해제
-    const handleBeforeUnload = async () => {
-      await store.disconnectAll();
+    const handleBeforeUnload = () => {
+      store.disconnectAll();
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
-
-    return () => {
-      // 페이지 이동 시에는 연결 유지 (beforeunload에서만 해제)
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 바코드 스캔은 useInspectionStore에서 처리됨
+  // 각 위상별로 완전히 분리된 변환 함수와 데이터
+  const p1ChartData = useMemo(() =>
+    p1MeasurementHistory.map((m) => ({
+      ...m,
+      timestamp: new Date(m.timestamp).toISOString(),
+      time: new Date(m.timestamp).toLocaleTimeString("ko-KR"),
+    })),
+    [p1MeasurementHistory]
+  );
 
-  // 장비 정보는 store에서 가져옴
+  const p2ChartData = useMemo(() =>
+    p2MeasurementHistory.map((m) => ({
+      ...m,
+      timestamp: new Date(m.timestamp).toISOString(),
+      time: new Date(m.timestamp).toLocaleTimeString("ko-KR"),
+    })),
+    [p2MeasurementHistory]
+  );
+
+  const p3ChartData = useMemo(() =>
+    p3MeasurementHistory.map((m) => ({
+      ...m,
+      timestamp: new Date(m.timestamp).toISOString(),
+      time: new Date(m.timestamp).toLocaleTimeString("ko-KR"),
+    })),
+    [p3MeasurementHistory]
+  );
+
+  const addLog = useCallback((type: MessageLog["type"], message: string) => {
+    const newLog: MessageLog = {
+      timestamp: new Date().toLocaleTimeString("ko-KR"),
+      type,
+      message,
+    };
+    setLogs((prev) => [...prev.slice(-19), newLog]); // 최대 20개까지만 유지
+  }, []);
+
+  useEffect(() => {
+    if (store.inspectionStatus === "running" && store.currentPhase) {
+      addLog("INFO", `${store.currentPhase} 단계 측정 중...`);
+    }
+  }, [store.inspectionStatus, store.currentPhase, addLog]);
+
+  // 각 위상별 최신 데이터를 로그에 추가 (독립적으로 감지)
+  useEffect(() => {
+    const latestP1 = p1MeasurementHistory[p1MeasurementHistory.length - 1];
+    if (latestP1) {
+      addLog(
+        latestP1.result === "PASS" ? "SUCCESS" : "WARNING",
+        `P1: ${latestP1.value} (${latestP1.result})`
+      );
+    }
+  }, [p1MeasurementHistory, addLog]);
+
+  useEffect(() => {
+    const latestP2 = p2MeasurementHistory[p2MeasurementHistory.length - 1];
+    if (latestP2) {
+      addLog(
+        latestP2.result === "PASS" ? "SUCCESS" : "WARNING",
+        `P2: ${latestP2.value} (${latestP2.result})`
+      );
+    }
+  }, [p2MeasurementHistory, addLog]);
+
+  useEffect(() => {
+    const latestP3 = p3MeasurementHistory[p3MeasurementHistory.length - 1];
+    if (latestP3) {
+      addLog(
+        latestP3.result === "PASS" ? "SUCCESS" : "WARNING",
+        `P3: ${latestP3.value} (${latestP3.result})`
+      );
+    }
+  }, [p3MeasurementHistory, addLog]);
+
+  const handleStartInspection = useCallback(() => {
+    const barcode = store.currentBarcode || `TEST_${Date.now()}`;
+    store.startSequentialInspection(barcode);
+    addLog("INFO", `검사 시작: ${barcode}`);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedModelId = useMemo(() => store.selectedModelId, [store.selectedModelId]);
+  const selectedModel = useMemo(() =>
+    store.inspectionModels.find((m) => m.id === selectedModelId),
+    [store.inspectionModels, selectedModelId]
+  );
+
+  // 각 위상별로 독립적인 한계값과 활성 상태
+  const p1Limits = useMemo(() =>
+    selectedModel ? {
+      lower: selectedModel.p1_lower_limit,
+      upper: selectedModel.p1_upper_limit,
+    } : undefined,
+    [selectedModel?.p1_lower_limit, selectedModel?.p1_upper_limit]
+  );
+
+  const p2Limits = useMemo(() =>
+    selectedModel ? {
+      lower: selectedModel.p2_lower_limit,
+      upper: selectedModel.p2_upper_limit,
+    } : undefined,
+    [selectedModel?.p2_lower_limit, selectedModel?.p2_upper_limit]
+  );
+
+  const p3Limits = useMemo(() =>
+    selectedModel ? {
+      lower: selectedModel.p3_lower_limit,
+      upper: selectedModel.p3_upper_limit,
+    } : undefined,
+    [selectedModel?.p3_lower_limit, selectedModel?.p3_upper_limit]
+  );
+
+  const isP1Active = useMemo(() => store.currentPhase === "P1", [store.currentPhase]);
+  const isP2Active = useMemo(() => store.currentPhase === "P2", [store.currentPhase]);
+  const isP3Active = useMemo(() => store.currentPhase === "P3", [store.currentPhase]);
 
   if (!isMounted) {
-    return null; // or a loading spinner
+    return <div className="flex justify-center items-center min-h-screen">로딩 중...</div>;
   }
 
-  // --- UI Event Handlers ---
-  const handleStartInspection = () => {
-    if (store.currentBarcode) {
-      store.startSequentialInspection(store.currentBarcode);
-    }
+  const StatusBox = () => {
+    const statusConfig = {
+      running: {
+        bg: "bg-blue-50 border-blue-200",
+        icon: <Activity className="h-5 w-5 text-blue-600 animate-pulse" />,
+        text: "검사 진행 중",
+        textColor: "text-blue-800",
+      },
+      completed: {
+        bg: "bg-green-50 border-green-200",
+        icon: <CheckCircle2 className="h-5 w-5 text-green-600" />,
+        text: "검사 완료",
+        textColor: "text-green-800",
+      },
+      error: {
+        bg: "bg-red-50 border-red-200",
+        icon: <AlertCircle className="h-5 w-5 text-red-600" />,
+        text: "검사 오류",
+        textColor: "text-red-800",
+      },
+      idle: {
+        bg: "bg-gray-50 border-gray-200",
+        icon: <Target className="h-5 w-5 text-gray-600" />,
+        text: "검사 대기 중",
+        textColor: "text-gray-800",
+      },
+    };
+
+    const config = statusConfig[store.inspectionStatus] || statusConfig.idle;
+
+    return (
+      <div className={`flex items-center gap-3 px-4 py-3 ${config.bg} border-2 rounded-lg`}>
+        <div className="flex items-center gap-2">
+          {config.icon}
+          <span className={`font-semibold ${config.textColor}`}>{config.text}</span>
+        </div>
+        {store.currentPhase && (
+          <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
+            현재: {store.currentPhase}
+          </Badge>
+        )}
+      </div>
+    );
   };
-
-  // --- Render ---
-
-  // Chart data requires a 'time' property, so we map it here.
-  const toChartData = (data: typeof store.measurementHistory): any[] => {
-    return data.map((m) => ({
-      ...m,
-      time: new Date(m.timestamp).toLocaleTimeString("ko-KR"),
-    }));
-  };
-
-  const p1Data = toChartData(
-    store.measurementHistory.filter((m) => m.phase === "P1")
-  );
-  const p2Data = toChartData(
-    store.measurementHistory.filter((m) => m.phase === "P2")
-  );
-  const p3Data = toChartData(
-    store.measurementHistory.filter((m) => m.phase === "P3")
-  );
-
-  const selectedModel = store.inspectionModels.find(
-    (m) => m.id === store.selectedModelId
-  );
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">검사 실행</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">검사 실행</h1>
+        <StatusBox />
+      </div>
       {store.error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -248,13 +368,14 @@ export default function InspectionPage() {
               <div>
                 <Label>검사 모델</Label>
                 <Select
-                  value={store.selectedModelId?.toString() || ""}
-                  onValueChange={(value) =>
-                    store.setSelectedModelId(parseInt(value))
-                  }
-                  disabled={
-                    store.isLoading || store.inspectionStatus === "running"
-                  }
+                  value={selectedModelId?.toString() || ""}
+                  onValueChange={(value) => {
+                    const numValue = parseInt(value);
+                    if (!isNaN(numValue)) {
+                      store.setSelectedModelId(numValue);
+                    }
+                  }}
+                  disabled={store.isLoading || store.inspectionStatus === "running"}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="모델 선택" />
@@ -297,10 +418,7 @@ export default function InspectionPage() {
                   <Button
                     onClick={handleStartInspection}
                     size="icon"
-                    disabled={
-                      !store.currentBarcode ||
-                      store.inspectionStatus === "running"
-                    }
+                    disabled={store.inspectionStatus === "running"}
                   >
                     <Scan className="h-4 w-4" />
                   </Button>
@@ -347,8 +465,7 @@ export default function InspectionPage() {
                   <Button
                     onClick={handleStartInspection}
                     disabled={
-                      !store.currentBarcode ||
-                      !store.selectedModelId ||
+                      !selectedModelId ||
                       store.powerMeterStatus !== "connected"
                     }
                     className="flex-1"
@@ -375,129 +492,60 @@ export default function InspectionPage() {
         <div className="lg:col-span-4 space-y-6">
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             <PhaseChart
-              data={p1Data}
+              data={p1ChartData}
               phase="P1"
               title="P1"
-              limits={
-                selectedModel
-                  ? {
-                      lower: selectedModel.p1_lower_limit,
-                      upper: selectedModel.p1_upper_limit,
-                    }
-                  : undefined
-              }
-              isActive={!!selectedModel && store.currentPhase === "P1"}
-              isCompleted={
-                !!selectedModel &&
-                store.currentPhase !== "P1" &&
-                store.inspectionStatus === "completed"
-              }
-              isPending={
-                !!selectedModel &&
-                !store.currentPhase &&
-                store.inspectionStatus === "idle"
-              }
+              limits={p1Limits}
+              isActive={isP1Active}
             />
             <PhaseChart
-              data={p2Data}
+              data={p2ChartData}
               phase="P2"
               title="P2"
-              limits={
-                selectedModel
-                  ? {
-                      lower: selectedModel.p2_lower_limit,
-                      upper: selectedModel.p2_upper_limit,
-                    }
-                  : undefined
-              }
-              isActive={!!selectedModel && store.currentPhase === "P2"}
-              isCompleted={
-                !!selectedModel &&
-                store.currentPhase !== "P2" &&
-                store.inspectionStatus === "completed"
-              }
-              isPending={
-                !!selectedModel &&
-                !store.currentPhase &&
-                store.inspectionStatus === "idle"
-              }
+              limits={p2Limits}
+              isActive={isP2Active}
             />
             <PhaseChart
-              data={p3Data}
+              data={p3ChartData}
               phase="P3"
               title="P3"
-              limits={
-                selectedModel
-                  ? {
-                      lower: selectedModel.p3_lower_limit,
-                      upper: selectedModel.p3_upper_limit,
-                    }
-                  : undefined
-              }
-              isActive={!!selectedModel && store.currentPhase === "P3"}
-              isCompleted={
-                !!selectedModel &&
-                store.currentPhase !== "P3" &&
-                store.inspectionStatus === "completed"
-              }
-              isPending={
-                !!selectedModel &&
-                !store.currentPhase &&
-                store.inspectionStatus === "idle"
-              }
+              limits={p3Limits}
+              isActive={isP3Active}
             />
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle>설비 통신 로그</CardTitle>
-              <CardDescription>
-                전력측정 설비와 주고받은 메시지 ({store.messageLogs.length}건)
-              </CardDescription>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                실시간 로그
+                <Badge variant="outline">{logs.length}</Badge>
+              </CardTitle>
             </CardHeader>
-            <CardContent className="max-h-64 overflow-y-auto">
-              {store.messageLogs.length === 0 ? (
-                <div className="text-center text-muted-foreground py-4">
-                  아직 통신 메시지가 없습니다
+            <CardContent className="max-h-64 overflow-y-auto bg-gray-900 text-green-400 p-3 rounded-md font-mono text-xs space-y-1">
+              {logs.length === 0 ? (
+                <div className="text-center text-gray-500 py-4">
+                  로그 대기 중...
                 </div>
               ) : (
-                store.messageLogs
-                  .slice()
-                  .reverse()
-                  .map((log, i) => (
-                    <div
-                      key={i}
-                      className="flex items-start gap-3 p-2 border-b text-sm"
+                logs.map((log, index) => (
+                  <div key={index} className="flex items-start gap-2">
+                    <span className="text-gray-400 shrink-0">[{log.timestamp}]</span>
+                    <span
+                      className={`${
+                        log.type === "SUCCESS"
+                          ? "text-green-400"
+                          : log.type === "WARNING"
+                          ? "text-yellow-400"
+                          : log.type === "ERROR"
+                          ? "text-red-400"
+                          : "text-blue-400"
+                      }`}
                     >
-                      <div className="flex-shrink-0">
-                        <Badge
-                          variant={
-                            log.direction === "OUT" ? "default" : "secondary"
-                          }
-                          className={
-                            log.direction === "OUT"
-                              ? "bg-blue-500 text-white"
-                              : "bg-green-500 text-white"
-                          }
-                        >
-                          {log.direction === "OUT" ? "→" : "←"}
-                        </Badge>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">
-                            {log.type}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(log.timestamp).toLocaleTimeString()}
-                          </span>
-                        </div>
-                        <div className="font-mono text-xs break-all">
-                          {log.content}
-                        </div>
-                      </div>
-                    </div>
-                  ))
+                      {log.message}
+                    </span>
+                  </div>
+                ))
               )}
             </CardContent>
           </Card>

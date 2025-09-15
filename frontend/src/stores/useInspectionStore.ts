@@ -67,7 +67,13 @@ export interface InspectionState {
   currentBarcode: string | null;
   selectedModelId: number | null;
   currentPhase: "P1" | "P2" | "P3" | null;
-  measurementHistory: Measurement[];
+
+  // 각 위상별로 분리된 측정 데이터
+  p1MeasurementHistory: Measurement[];
+  p2MeasurementHistory: Measurement[];
+  p3MeasurementHistory: Measurement[];
+  measurementHistory: Measurement[]; // 호환성을 위해 유지
+
   currentMeasurement: Measurement | null;
 
   // --- Message Logs ---
@@ -101,6 +107,12 @@ export interface InspectionActions {
   setSelectedModelId: (id: number | null) => void;
   setBarcode: (barcode: string) => void;
 
+  // --- Measurement Data Management ---
+  addP1Measurement: (measurement: Measurement) => void;
+  addP2Measurement: (measurement: Measurement) => void;
+  addP3Measurement: (measurement: Measurement) => void;
+  clearAllMeasurements: () => void;
+
   // --- SSE Internal ---
   _connectSse: () => void;
   _handleSseMessage: (event: MessageEvent) => void;
@@ -124,7 +136,13 @@ const initialState: InspectionState = {
   currentBarcode: null,
   selectedModelId: null,
   currentPhase: null,
+
+  // 각 위상별로 분리된 측정 데이터 초기화
+  p1MeasurementHistory: [],
+  p2MeasurementHistory: [],
+  p3MeasurementHistory: [],
   measurementHistory: [],
+
   currentMeasurement: null,
   messageLogs: [],
   sse: null,
@@ -238,7 +256,10 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
         await apiClient.disconnectDevice(connectedPowerMeter.id);
         console.log(`✅ 설비 ${connectedPowerMeter.name} 연결 해제 완료`);
       } catch (error) {
-        console.error(`❌ 설비 ${connectedPowerMeter.name} 연결 해제 실패:`, error);
+        console.error(
+          `❌ 설비 ${connectedPowerMeter.name} 연결 해제 실패:`,
+          error
+        );
       }
     }
 
@@ -271,14 +292,17 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
     }
 
     try {
-      set({ 
+      set({
         error: null,
         inspectionStatus: "running",
         currentBarcode: barcode,
+        // 모든 위상별 데이터 초기화
+        p1MeasurementHistory: [],
+        p2MeasurementHistory: [],
+        p3MeasurementHistory: [],
         measurementHistory: [],
         currentMeasurement: null,
         currentPhase: null,
-        messageLogs: [], // 새 검사 시작 시 로그 초기화
       });
 
       await apiClient.startSequentialInspection({
@@ -288,26 +312,76 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
         wait_duration: waitDuration,
         interval_sec: intervalSec,
       });
-
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      set({ error: `순차 검사 시작 실패: ${errorMessage}`, inspectionStatus: 'error' });
+      set({
+        error: `순차 검사 시작 실패: ${errorMessage}`,
+        inspectionStatus: "error",
+      });
     }
   },
 
   stopInspection: async () => {
     try {
-        await apiClient.stopInspection();
-        set({ inspectionStatus: "idle", currentPhase: null });
+      await apiClient.stopInspection();
+      set({ inspectionStatus: "idle", currentPhase: null });
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        set({ error: `검사 중지 실패: ${errorMessage}` });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      set({ error: `검사 중지 실패: ${errorMessage}` });
     }
   },
 
   setSelectedModelId: (id) => set({ selectedModelId: id }),
   setBarcode: (barcode) => set({ currentBarcode: barcode }),
+
+  // --- Measurement Data Management Actions ---
+  addP1Measurement: (measurement) => {
+    set((state) => {
+      const newP1History = [...state.p1MeasurementHistory, measurement].slice(-100); // 최대 100개
+      const newMeasurementHistory = [...state.measurementHistory, measurement].slice(-300); // 호환성용
+      return {
+        p1MeasurementHistory: newP1History,
+        measurementHistory: newMeasurementHistory,
+        currentMeasurement: measurement,
+      };
+    });
+  },
+
+  addP2Measurement: (measurement) => {
+    set((state) => {
+      const newP2History = [...state.p2MeasurementHistory, measurement].slice(-100);
+      const newMeasurementHistory = [...state.measurementHistory, measurement].slice(-300);
+      return {
+        p2MeasurementHistory: newP2History,
+        measurementHistory: newMeasurementHistory,
+        currentMeasurement: measurement,
+      };
+    });
+  },
+
+  addP3Measurement: (measurement) => {
+    set((state) => {
+      const newP3History = [...state.p3MeasurementHistory, measurement].slice(-100);
+      const newMeasurementHistory = [...state.measurementHistory, measurement].slice(-300);
+      return {
+        p3MeasurementHistory: newP3History,
+        measurementHistory: newMeasurementHistory,
+        currentMeasurement: measurement,
+      };
+    });
+  },
+
+  clearAllMeasurements: () => {
+    set({
+      p1MeasurementHistory: [],
+      p2MeasurementHistory: [],
+      p3MeasurementHistory: [],
+      measurementHistory: [],
+      currentMeasurement: null,
+    });
+  },
 
   // --- SSE Internal Actions ---
   _connectSse: () => {
@@ -328,12 +402,14 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
 
     sse.onerror = (error) => {
       console.error("💥 [STORE] SSE 오류:", error);
+      // 연결을 닫아 자동 재연결 방지
+      sse.close();
       set({
         sseStatus: "disconnected",
         sse: null,
-        error: "실시간 이벤트 스트림 연결 오류 발생",
+        error:
+          "실시간 서버 연결이 끊어졌습니다. 백엔드 서버 상태를 확인 후, '재연결' 버튼을 눌러주세요.",
       });
-      sse.close();
     };
   },
 
@@ -353,17 +429,42 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
         }
         break;
       case "measurement_update":
+        // 측정 데이터는 우선순위로 즉시 처리
         const newMeasurement: Measurement = message.data;
-        set((state) => ({
-          currentMeasurement: newMeasurement,
-          measurementHistory: [...state.measurementHistory, newMeasurement],
-        }));
+        console.log(`📊 [STORE] 측정 데이터 수신:`, {
+          phase: newMeasurement.phase,
+          value: newMeasurement.value,
+          timestamp: newMeasurement.timestamp,
+        });
+
+        // 각 위상별로 분리해서 데이터 업데이트
+        switch (newMeasurement.phase) {
+          case "P1":
+            get().addP1Measurement(newMeasurement);
+            break;
+          case "P2":
+            get().addP2Measurement(newMeasurement);
+            break;
+          case "P3":
+            get().addP3Measurement(newMeasurement);
+            break;
+        }
         break;
       case "message_log":
+        // 로그 메시지는 별도로 처리 (측정 데이터와 분리)
         const messageLog: MessageLog = message.data;
-        set((state) => ({
-          messageLogs: [...state.messageLogs, messageLog],
-        }));
+
+        // 위상 간 대기 상태 로그만 콘솔에 출력
+        if (messageLog.type === "PHASE_WAIT") {
+          if (messageLog.content.includes("대기 시작")) {
+            console.log("⏳ [STORE] 위상 간 대기 시작:", messageLog.content);
+          } else if (messageLog.content.includes("대기 완료")) {
+            console.log("✅ [STORE] 위상 간 대기 완료:", messageLog.content);
+          }
+        }
+
+        // 로그 상태 업데이트 제거 (무한 루프 방지)
+        // 로그는 콘솔에만 출력하고 상태는 업데이트하지 않음
         break;
       case "inspection_started":
         set({
@@ -376,6 +477,7 @@ export const useInspectionStore = create<InspectionStore>((set, get) => ({
         set({ currentPhase: message.data.phase });
         break;
       case "phase_complete":
+        // 위상 완료 (단순히 무시, 백엔드가 모든 로직 처리)
         // console.log(`✅ [STORE] 위상 ${message.data.phase} 완료:`, message.data.results);
         break;
       case "inspection_complete":

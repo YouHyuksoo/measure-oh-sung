@@ -36,33 +36,47 @@ class InspectionRoutineService:
         db: Session
     ):
         """바코드 스캔 트리거로 P1 → P2 → P3 순차 검사 실행 (비동기 래퍼)"""
+        logger.info(">>> [TRACE] start_sequential_inspection: 시작")
         try:
+            print(">>> [TRACE] DB에서 검사 모델 조회...")
             inspection_model = crud.inspection_model.get(db, id=request.inspection_model_id)
             if not inspection_model:
                 raise ValueError(f"Inspection model {request.inspection_model_id} not found")
+            logger.info(f">>> [TRACE] 검사 모델 '{inspection_model.model_name}' 확인.")
 
+            print(">>> [TRACE] DB에서 테스트 설정 조회...")
             test_settings = crud.test_settings.get_active_by_model(db, inspection_model_id=request.inspection_model_id)
             if not test_settings:
                 test_settings = crud.test_settings.get_active_global(db)
 
             if test_settings:
+                logger.info(f">>> [TRACE] 테스트 설정 '{test_settings.name}' 사용.")
                 measurement_duration = test_settings.p1_measure_duration
                 wait_duration = test_settings.wait_duration_1_to_2
                 interval_sec = test_settings.data_collection_interval
                 measurement_method = test_settings.measurement_method
             else:
+                print(">>> [TRACE] 활성 테스트 설정 없음. 요청 기본값 사용.")
                 measurement_duration = request.measurement_duration
                 wait_duration = request.wait_duration
                 interval_sec = request.interval_sec
                 measurement_method = "polling"
 
+            print(">>> [TRACE] DB에서 전력계 장비 조회...")
             power_meter_device = crud.device.get_power_meter(db)
+            
+            print(">>> [TRACE] 전력계 연결 상태 확인...")
             if not power_meter_device or not serial_service.is_connected(power_meter_device.id):
+                logger.error(">>> [TRACE] 전력계가 연결되지 않음! (device: {power_meter_device}, is_connected: {serial_service.is_connected(power_meter_device.id) if power_meter_device else 'N/A'})")
                 raise ValueError("Power meter not connected")
+            print(">>> [TRACE] 전력계 연결 확인 완료.")
 
+            print(">>> [TRACE] 시리얼 연결 객체 가져오기...")
             serial_connection = serial_service.get_connection(power_meter_device.id)
             if not serial_connection:
+                logger.error(">>> [TRACE] 시리얼 연결 객체를 가져올 수 없음!")
                 raise ValueError("Serial connection not available")
+            logger.info(f">>> [TRACE] 시리얼 연결 객체 확보 완료: {serial_connection}")
 
             session_id = str(uuid.uuid4())
             self.current_session = {
@@ -71,6 +85,7 @@ class InspectionRoutineService:
                 "inspection_model": inspection_model,
                 "start_time": datetime.now(),
             }
+            logger.info(f">>> [TRACE] 검사 세션 생성: {session_id}")
 
             message_queue.put({
                 "type": "inspection_started",
@@ -88,10 +103,31 @@ class InspectionRoutineService:
                 message_queue.put({"type": "message_log", "data": {"timestamp": datetime.now().isoformat(), "type": message_type, "content": content, "direction": direction}})
 
             def on_phase_start(phase: str):
-                message_queue.put({"type": "phase_update", "timestamp": datetime.now().isoformat(), "data": {"phase": phase, "status": f"MEASURING_{phase}"}})
+                message_queue.put({
+                    "type": "phase_update", 
+                    "timestamp": datetime.now().isoformat(), 
+                    "data": {
+                        "phase": phase, 
+                        "status": f"MEASURING_{phase}",
+                        "message": f"{phase} 단계 측정 시작"
+                    }
+                })
+                logger.info(f"🔵 [PHASE] {phase} 단계 시작 알림 전송")
 
             def on_phase_data(phase: str, elapsed: float, value: float):
-                message_queue.put({"type": "measurement_update", "timestamp": datetime.now().isoformat(), "data": {"phase": phase, "elapsed": elapsed, "value": value}})
+                message_queue.put({
+                    "type": "measurement_update", 
+                    "timestamp": datetime.now().isoformat(), 
+                    "data": {
+                        "barcode": request.barcode,
+                        "phase": phase, 
+                        "elapsed": elapsed, 
+                        "value": value,
+                        "unit": "W",
+                        "result": "PENDING",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                })
 
             def on_phase_complete(phase: str, timestamps: list, values: list):
                 results = {
@@ -103,9 +139,18 @@ class InspectionRoutineService:
                     "max": max([v for v in values if v is not None]) if any(v is not None for v in values) else 0,
                 }
                 measurement_results[phase] = results
-                message_queue.put({"type": "phase_complete", "timestamp": datetime.now().isoformat(), "data": {"phase": phase, "results": results}})
+                message_queue.put({
+                    "type": "phase_complete", 
+                    "timestamp": datetime.now().isoformat(), 
+                    "data": {
+                        "phase": phase, 
+                        "results": results,
+                        "message": f"{phase} 단계 측정 완료"
+                    }
+                })
+                logger.info(f"🟢 [PHASE] {phase} 단계 완료 알림 전송 - 유효 데이터: {results['count']}개")
 
-            # Run the synchronous, blocking function in a separate thread
+            print(">>> [TRACE] 백그라운드 스레드에서 동기 함수 wt310_sequential_inspection 실행 시작...")
             await asyncio.to_thread(
                 wt310_sequential_inspection,
                 ser=serial_connection, phases=["P1", "P2", "P3"],
@@ -115,13 +160,16 @@ class InspectionRoutineService:
                 on_phase_data=on_phase_data, on_phase_complete=on_phase_complete,
                 on_message_log=add_message_log
             )
+            print(">>> [TRACE] wt310_sequential_inspection 실행 완료.")
 
             final_results = self._calculate_final_results(measurement_results, inspection_model)
 
+            print(">>> [TRACE] DB에 결과 저장 시작...")
             await self._save_measurement_results(
                 session_id=session_id, barcode=request.barcode, inspection_model=inspection_model,
                 measurement_results=measurement_results, final_results=final_results, db=db
             )
+            print(">>> [TRACE] DB에 결과 저장 완료.")
 
             message_queue.put({
                 "type": "inspection_complete",
@@ -130,9 +178,10 @@ class InspectionRoutineService:
             })
 
         except Exception as e:
-            logger.error(f"순차 검사 실패: {e}")
+            logger.error(f">>> [TRACE] start_sequential_inspection에서 예외 발생: {e}")
             message_queue.put({"type": "inspection_error", "timestamp": datetime.now().isoformat(), "data": {"error": str(e)}})
         finally:
+            print(">>> [TRACE] start_sequential_inspection: 종료")
             self.current_session = None
             self.status = InspectionStatus.IDLE
 

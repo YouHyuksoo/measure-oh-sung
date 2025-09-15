@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import {
   LineChart,
   Line,
@@ -47,165 +47,101 @@ interface PhaseChartProps {
     upper: number;
   };
   maxDataPoints?: number;
-  isRealTime?: boolean;
-  onTogglePause?: () => void;
-  onClear?: () => void;
-  // 자동 검사 관련 props
-  isActive?: boolean; // 현재 활성화된 단계인지
-  isCompleted?: boolean; // 완료된 단계인지
-  isPending?: boolean; // 대기 중인 단계인지
+  isActive?: boolean;
 }
 
-export function PhaseChart({
+export const PhaseChart = memo(function PhaseChart({
   data = [],
   phase,
   title,
   limits,
   maxDataPoints = 20,
-  isRealTime = true,
-  onTogglePause,
-  onClear,
   isActive = false,
-  isCompleted = false,
-  isPending = false,
 }: PhaseChartProps) {
-  const [chartData, setChartData] = useState<MeasurementPoint[]>([]);
   const [isPaused, setIsPaused] = useState(false);
-  const [statistics, setStatistics] = useState({
-    avg: 0,
-    min: 0,
-    max: 0,
-    count: 0,
-    passRate: 0,
-    trend: "stable" as "up" | "down" | "stable",
-  });
 
-  // 단계별 색상 설정 - 활성 상태에 따라 동적 결정
-  const getPhaseColor = () => {
-    // 자동 검사 상태에 따른 색상 결정
+  const chartData = useMemo(() => {
+    return data.slice(-maxDataPoints);
+  }, [data, maxDataPoints]);
+
+  const colors = useMemo(() => {
     if (isActive) {
-      // 현재 활성 단계 - 레인보우 테두리 + 애니메이션
       return {
         main: "#3b82f6",
         bg: "bg-gradient-to-br from-blue-100 to-purple-100",
         border: "border-4 border-blue-600",
-        text: "text-blue-900 font-bold",
+        cardClass: "animate-pulse shadow-2xl shadow-blue-400 ring-4 ring-blue-500 ring-opacity-50 transform scale-105",
       };
     }
-
-    if (isCompleted) {
-      // 완료된 단계 - 밝은 초록
-      return {
-        main: "#059669",
-        bg: "bg-gradient-to-br from-emerald-100 to-green-100",
-        border: "border-4 border-emerald-600",
-        text: "text-emerald-900 font-bold",
-      };
-    }
-
-    if (isPending) {
-      // 대기 중인 단계 - 밝은 주황
-      return {
-        main: "#ea580c",
-        bg: "bg-gradient-to-br from-orange-100 to-yellow-100",
-        border: "border-4 border-orange-500",
-        text: "text-orange-900 font-bold",
-      };
-    }
-
-    // 기본 상태 - 깔끔한 회색
     return {
       main: "#6b7280",
       bg: "bg-gray-50",
       border: "border-2 border-gray-300",
-      text: "text-gray-700",
+      cardClass: "hover:shadow-md shadow-sm",
     };
-  };
+  }, [isActive]);
 
-  const colors = getPhaseColor();
-
-  // 통계 계산
-  const calculateStatistics = useCallback(
-    (data: MeasurementPoint[]) => {
-      if (data.length === 0) {
-        setStatistics({
-          avg: 0,
-          min: 0,
-          max: 0,
-          count: 0,
-          passRate: 0,
-          trend: "stable",
-        });
-        return;
-      }
-
-      const values = data.map((d) => d.value).filter((v) => v !== undefined);
-
-      if (values.length > 0) {
-        const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
-        const min = Math.min(...values);
-        const max = Math.max(...values);
-
-        // 합격률 계산 - 범위 내에 있는지 확인
-        let passCount = 0;
-        if (limits) {
-          passCount = data.filter((d) => {
-            return d.value >= limits.lower && d.value <= limits.upper;
-          }).length;
-        } else {
-          // 범위가 없으면 모든 데이터를 합격으로 처리
-          passCount = data.length;
-        }
-        const passRate = data.length > 0 ? (passCount / data.length) * 100 : 0;
-
-        // 트렌드 계산 (최근 5개 데이터점 기준)
-        let trend: "up" | "down" | "stable" = "stable";
-        if (values.length >= 5) {
-          const recent = values.slice(-5);
-          const firstHalf = recent.slice(0, Math.floor(recent.length / 2));
-          const secondHalf = recent.slice(Math.floor(recent.length / 2));
-          const firstAvg =
-            firstHalf.reduce((sum, val) => sum + val, 0) / firstHalf.length;
-          const secondAvg =
-            secondHalf.reduce((sum, val) => sum + val, 0) / secondHalf.length;
-
-          const diff = secondAvg - firstAvg;
-          const threshold = (max - min) * 0.05; // 변동폭의 5%를 임계값으로
-          trend =
-            Math.abs(diff) < threshold ? "stable" : diff > 0 ? "up" : "down";
-        }
-
-        setStatistics({
-          avg: parseFloat(avg.toFixed(2)),
-          min: parseFloat(min.toFixed(2)),
-          max: parseFloat(max.toFixed(2)),
-          count: data.length,
-          passRate: parseFloat(passRate.toFixed(1)),
-          trend,
-        });
-      }
-    },
-    [setStatistics, limits]
-  );
-
-  // 데이터 업데이트
-  useEffect(() => {
-    if (!isPaused && isRealTime) {
-      const limitedData = data.slice(-maxDataPoints);
-      setChartData(limitedData);
-      calculateStatistics(limitedData);
+  const statistics = useMemo(() => {
+    if (chartData.length === 0) {
+      return {
+        avg: 0,
+        count: 0,
+        passRate: 0,
+        trend: "stable" as "up" | "down" | "stable",
+        overallResult: "PENDING" as "PASS" | "FAIL" | "PENDING",
+      };
     }
-  }, [data, maxDataPoints, isPaused, isRealTime, calculateStatistics]);
 
-  const handleTogglePause = () => {
+    const values = chartData.map((d) => d.value).filter((v) => v !== undefined);
+    if (values.length === 0) {
+      return {
+        avg: 0,
+        count: 0,
+        passRate: 0,
+        trend: "stable" as "up" | "down" | "stable",
+        overallResult: "PENDING" as "PASS" | "FAIL" | "PENDING",
+      };
+    }
+
+    const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+
+    let passCount = 0;
+    let overallResult: "PASS" | "FAIL" | "PENDING" = "PENDING";
+
+    if (limits) {
+      // 상한/하한 범위 체크
+      const allInRange = chartData.every((d) =>
+        d.value >= limits.lower && d.value <= limits.upper
+      );
+
+      passCount = chartData.filter((d) =>
+        d.value >= limits.lower && d.value <= limits.upper
+      ).length;
+
+      // 전체 판정: 모든 데이터가 범위 안에 있으면 합격, 하나라도 벗어나면 불합격
+      if (chartData.length > 0) {
+        overallResult = allInRange ? "PASS" : "FAIL";
+      }
+    } else {
+      passCount = chartData.length;
+      overallResult = chartData.length > 0 ? "PASS" : "PENDING";
+    }
+
+    const passRate = chartData.length > 0 ? (passCount / chartData.length) * 100 : 0;
+
+    return {
+      avg: parseFloat(avg.toFixed(2)),
+      count: chartData.length,
+      passRate: parseFloat(passRate.toFixed(1)),
+      trend: "stable" as "up" | "down" | "stable",
+      overallResult,
+    };
+  }, [chartData, limits]);
+
+
+  const handleTogglePause = useCallback(() => {
     setIsPaused(!isPaused);
-    onTogglePause?.();
-  };
-
-  const handleClear = () => {
-    setChartData([]);
-    onClear?.();
-  };
+  }, [isPaused]);
 
   const formatTooltip = (value: number) => {
     return [`${value.toFixed(2)}`, `${phase} 측정값`];
@@ -219,65 +155,18 @@ export function PhaseChart({
     });
   };
 
-  const getTrendIcon = () => {
-    switch (statistics.trend) {
-      case "up":
-        return <TrendingUp className="h-4 w-4 text-green-600" />;
-      case "down":
-        return <TrendingDown className="h-4 w-4 text-red-600" />;
-      default:
-        return <Activity className="h-4 w-4 text-blue-600" />;
-    }
-  };
-
-  const getTrendColor = () => {
-    switch (statistics.trend) {
-      case "up":
-        return "text-green-600";
-      case "down":
-        return "text-red-600";
-      default:
-        return "text-blue-600";
-    }
-  };
-
-  const getCardClass = () => {
-    let baseClass = `${colors.bg} ${colors.border} transition-all duration-500 rounded-lg`;
-
-    if (isActive) {
-      // 활성 단계: 강렬한 파란색 + 맥박 효과 + 글로우
-      baseClass +=
-        " animate-pulse shadow-2xl shadow-blue-400 ring-4 ring-blue-500 ring-opacity-50 transform scale-105";
-    } else if (isCompleted) {
-      // 완료 단계: 초록색 글로우
-      baseClass +=
-        " shadow-xl shadow-emerald-300 ring-2 ring-emerald-400 ring-opacity-30";
-    } else if (isPending) {
-      // 대기 단계: 주황색 글로우
-      baseClass +=
-        " shadow-lg shadow-orange-300 ring-2 ring-orange-400 ring-opacity-30";
-    } else {
-      // 기본 상태: 부드러운 그림자
-      baseClass += " hover:shadow-md shadow-sm";
-    }
-
-    return baseClass;
-  };
 
   return (
-    <Card className={getCardClass()}>
+    <Card className={`${colors.bg} ${colors.border} ${colors.cardClass} transition-all duration-500 rounded-lg`}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className={`flex items-center gap-2 ${colors.text}`}>
+            <CardTitle className={`flex items-center gap-2 ${isActive ? "text-blue-900 font-bold" : "text-gray-700"}`}>
               <Target className="h-5 w-5" />
               {title}
-              {isRealTime && (
-                <Badge
-                  variant={isPaused ? "secondary" : "default"}
-                  className="text-xs"
-                >
-                  {isPaused ? "일시정지" : "실시간"}
+              {isActive && (
+                <Badge variant="default" className="text-xs bg-blue-500">
+                  측정 중
                 </Badge>
               )}
             </CardTitle>
@@ -287,70 +176,40 @@ export function PhaseChart({
                 : "단계별 LSL/USL"}
             </CardDescription>
           </div>
-          <div className="flex gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={handleTogglePause}
-              title={isPaused ? "재생" : "일시정지"}
-              className="h-8 w-8"
-            >
-              {isPaused ? (
-                <Play className="h-3 w-3" />
-              ) : (
-                <Pause className="h-3 w-3" />
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={handleClear}
-              title="차트 지우기"
-              className="h-8 w-8"
-            >
-              <RotateCcw className="h-3 w-3" />
-            </Button>
+          <div className="text-xs text-gray-500">
+            데이터: {statistics.count}개
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* 통계 정보 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="text-center p-2 bg-white/60 rounded-lg">
-            <div className="flex items-center justify-center gap-1 mb-1">
-              <span className="font-medium text-xs">평균</span>
-              {getTrendIcon()}
-            </div>
-            <div className={`text-sm font-bold ${getTrendColor()}`}>
-              {statistics.avg}
-            </div>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="text-center p-3 bg-white/80 rounded-lg">
+            <div className="text-xs text-gray-500 mb-1">평균</div>
+            <div className="text-lg font-bold text-blue-600">{statistics.avg}</div>
           </div>
-          <div className="text-center p-2 bg-white/60 rounded-lg">
-            <div className="text-xs text-muted-foreground mb-1">판정</div>
-            <div
-              className={`text-sm font-bold ${
-                statistics.count === 0
-                  ? "text-gray-500"
-                  : statistics.passRate === 100
-                  ? "text-green-600"
-                  : "text-red-600"
-              }`}
-            >
-              {statistics.count === 0
-                ? "대기"
-                : statistics.passRate === 100
-                ? "합격"
-                : "불합격"}
-            </div>
+          <div className="text-center p-3 bg-white/80 rounded-lg">
+            <div className="text-xs text-gray-500 mb-1">데이터 수</div>
+            <div className="text-lg font-bold">{statistics.count}</div>
           </div>
-          <div className="text-center p-2 bg-white/60 rounded-lg">
-            <div className="text-xs text-muted-foreground mb-1">데이터 수</div>
-            <div className="text-sm font-bold">{statistics.count}</div>
-          </div>
-          <div className="text-center p-2 bg-white/60 rounded-lg">
-            <div className="text-xs text-muted-foreground mb-1">합격률</div>
-            <div className="text-sm font-bold text-green-600">
+          <div className="text-center p-3 bg-white/80 rounded-lg">
+            <div className="text-xs text-gray-500 mb-1">합격률</div>
+            <div className={`text-lg font-bold ${
+              statistics.passRate === 100 ? "text-green-600" : statistics.passRate > 90 ? "text-yellow-600" : "text-red-600"
+            }`}>
               {statistics.passRate}%
+            </div>
+          </div>
+          <div className="text-center p-3 bg-white/80 rounded-lg">
+            <div className="text-xs text-gray-500 mb-1">판정</div>
+            <div className={`text-lg font-bold ${
+              statistics.overallResult === "PASS"
+                ? "text-green-600"
+                : statistics.overallResult === "FAIL"
+                  ? "text-red-600"
+                  : "text-gray-500"
+            }`}>
+              {statistics.overallResult === "PASS" ? "합격" :
+               statistics.overallResult === "FAIL" ? "불합격" : "대기"}
             </div>
           </div>
         </div>
@@ -372,11 +231,7 @@ export function PhaseChart({
                 />
                 <YAxis
                   tick={{ fontSize: 10 }}
-                  domain={
-                    limits
-                      ? [limits.lower * 0.8, limits.upper * 1.2]
-                      : undefined
-                  }
+                  domain={limits ? [0, limits.upper * 1.2] : [0, "dataMax"]}
                 />
                 <Tooltip
                   formatter={formatTooltip}
@@ -392,13 +247,11 @@ export function PhaseChart({
                       y={limits.lower}
                       stroke="#ef4444"
                       strokeDasharray="5 5"
-                      label={{ value: "하한", position: "left" }}
                     />
                     <ReferenceLine
                       y={limits.upper}
                       stroke="#ef4444"
                       strokeDasharray="5 5"
-                      label={{ value: "상한", position: "left" }}
                     />
                   </>
                 )}
@@ -407,19 +260,10 @@ export function PhaseChart({
                   type="monotone"
                   dataKey="value"
                   stroke={colors.main}
-                  strokeWidth={2}
+                  strokeWidth={isActive ? 3 : 2}
                   name={`${phase} 측정값`}
                   connectNulls={false}
-                  dot={(props) => {
-                    const { payload, cx, cy } = props;
-                    let color = colors.main;
-                    if (payload?.result === "PASS") {
-                      color = "#10b981";
-                    } else if (payload?.result === "FAIL") {
-                      color = "#ef4444";
-                    }
-                    return <circle cx={cx} cy={cy} fill={color} r={3} />;
-                  }}
+                  dot={{ fill: colors.main, r: isActive ? 4 : 3 }}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -436,21 +280,12 @@ export function PhaseChart({
           )}
         </div>
 
-        {/* 데이터 정보 */}
-        <div className="flex justify-between items-center text-xs text-muted-foreground">
-          <span>
-            데이터: {chartData.length}/{maxDataPoints}
-          </span>
-          {chartData.length > 0 && (
-            <span>
-              최근:{" "}
-              {new Date(
-                chartData[chartData.length - 1]?.timestamp || ""
-              ).toLocaleTimeString("ko-KR")}
-            </span>
-          )}
-        </div>
+        {chartData.length > 0 && (
+          <div className="text-xs text-gray-500 text-center">
+            최근 업데이트: {new Date(chartData[chartData.length - 1]?.timestamp || "").toLocaleTimeString("ko-KR")}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
-}
+});

@@ -1,6 +1,7 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app import crud, schemas
 from app.db.database import get_db
@@ -83,3 +84,48 @@ def get_failed_measurements(
     """실패한 측정 데이터들을 조회합니다."""
     measurements = crud.measurement.get_failed_measurements(db=db, skip=skip, limit=limit)
     return measurements
+
+class BulkDeleteRequest(BaseModel):
+    """일괄 삭제 요청 모델"""
+    measurement_ids: List[int]
+
+@router.delete("/{id}")
+def delete_measurement(
+    *,
+    db: Session = Depends(get_db),
+    id: int,
+) -> Any:
+    """특정 ID의 측정 데이터를 삭제합니다."""
+    measurement = crud.measurement.get(db=db, id=id)
+    if not measurement:
+        raise HTTPException(status_code=404, detail="Measurement not found")
+
+    crud.measurement.remove(db=db, id=id)
+    return {"message": f"Measurement {id} deleted successfully"}
+
+@router.post("/bulk-delete")
+def bulk_delete_measurements(
+    *,
+    db: Session = Depends(get_db),
+    bulk_request: BulkDeleteRequest,
+) -> Any:
+    """여러 측정 데이터를 일괄 삭제합니다."""
+    deleted_count = 0
+    failed_ids = []
+
+    for measurement_id in bulk_request.measurement_ids:
+        try:
+            measurement = crud.measurement.get(db=db, id=measurement_id)
+            if measurement:
+                crud.measurement.remove(db=db, id=measurement_id)
+                deleted_count += 1
+            else:
+                failed_ids.append(measurement_id)
+        except Exception as e:
+            failed_ids.append(measurement_id)
+
+    return {
+        "message": f"Successfully deleted {deleted_count} measurements",
+        "deleted_count": deleted_count,
+        "failed_ids": failed_ids
+    }

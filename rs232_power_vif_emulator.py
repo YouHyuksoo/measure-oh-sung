@@ -37,10 +37,10 @@ class VIFPowerModel:
         self.I0 = 0.600     # amps
         self.F0 = 60.00     # Hz
         self.PF = 1.000
-        # 노이즈(% 표준편차)
-        self.noise_v = 0.5    # %
-        self.noise_i = 1.0    # %
-        self.noise_f = 0.05   # %
+        # 노이즈(% 표준편차) - 10W 정도의 차이를 위해 증가
+        self.noise_v = 2.0    # % (전압 노이즈 증가)
+        self.noise_i = 3.0    # % (전류 노이즈 증가)
+        self.noise_f = 0.1    # % (주파수 노이즈 약간 증가)
         # 레인지(최대값)
         self.v_range = 600.0
         self.i_range = 10.0
@@ -98,7 +98,14 @@ class VIFPowerModel:
         V = clip(random.gauss(self.V0, self.V0 * self.noise_v / 100.0), 0.0, self.v_range)
         I = clip(random.gauss(self.I0, self.I0 * self.noise_i / 100.0), 0.0, self.i_range)
         F = clip(random.gauss(self.F0, self.F0 * self.noise_f / 100.0), 0.0, 1000.0)
-        P = max(0.0, V * I * self.PF)
+        
+        # 시간에 따른 주기적 변화 추가 (10W 정도의 변동)
+        time_factor = math.sin(time.time() * 0.5) * 0.05  # ±5% 변동
+        additional_noise = random.uniform(-0.02, 0.02)    # ±2% 추가 랜덤 변동
+        
+        # 전력 계산에 변동 적용
+        P = max(0.0, V * I * self.PF * (1.0 + time_factor + additional_noise))
+        
         self.lastV, self.lastI, self.lastF, self.lastP = V, I, F, P
         # 에너지 적산 (Wh)
         self.energy_Wh += (P * dt_s) / 3600.0
@@ -145,6 +152,7 @@ class RS232VIFPowerEmu:
     def _writeline(self, s):
         try:
             self.ser.write((s + LF).encode("utf-8"))
+            self.ser.flush()  # 버퍼를 즉시 전송
             print(f"[DEBUG] 응답 전송: '{s}'")
         except Exception as e:
             print(f"[ERROR] 응답 전송 실패: {e}")
@@ -162,13 +170,14 @@ class RS232VIFPowerEmu:
             dt = max(0.0, now - last)
             last = now
             with self.lock:
-                if self.state == STATE_RUN:
-                    self.model.next_sample(dt)
-                    if self.stream_on:
-                        s = self.model.snapshot()
-                        line = f"{s['ts']:.3f}, {s['P']:.3f}, {s['V']:.2f}, {s['I']:.3f}, {s['F']:.2f}, {self.state}"
-                        # 헤더는 최초 ON 시점에 컨트롤 플레인에서 한 번만 보낸다. (간단화)
-                        self._writeline(line)
+                # 항상 샘플을 업데이트 (READY 상태에서도 측정 가능)
+                self.model.next_sample(dt)
+                
+                if self.state == STATE_RUN and self.stream_on:
+                    s = self.model.snapshot()
+                    line = f"{s['ts']:.3f}, {s['P']:.3f}, {s['V']:.2f}, {s['I']:.3f}, {s['F']:.2f}, {self.state}"
+                    # 헤더는 최초 ON 시점에 컨트롤 플레인에서 한 번만 보낸다. (간단화)
+                    self._writeline(line)
 
     # ---- 명령 처리
     def handle_line(self, raw):
