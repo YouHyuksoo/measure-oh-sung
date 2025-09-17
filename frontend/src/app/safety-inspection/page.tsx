@@ -33,9 +33,14 @@ import {
   TrendingUp,
   XCircle,
   Database,
+  Power,
+  Target,
 } from "lucide-react";
 import { apiClient } from "@/lib/api";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import {
+  useInspectionStore,
+  type SafetyInspectionItem,
+} from "@/stores/useInspectionStore";
 import {
   useBarcodeStore,
   selectBarcodeScanner,
@@ -48,19 +53,57 @@ import {
   DeviceInfo,
 } from "@/stores/useDeviceStore";
 
-// 3대 안전검사 항목 인터페이스
-interface SafetyInspectionItem {
-  id: string;
-  name: string;
-  nameEn: string;
-  unit: string;
-  sourceVoltage: string;
-  limitValue: number;
-  limitDirection: "up" | "down";
-  currentValue: number | null;
-  result: "PASS" | "FAIL" | "PENDING";
-  isCompleted: boolean;
+// 3대 안전검사 항목 인터페이스는 store에서 관리됨
+
+// 실시간 로그 인터페이스 (inspection 페이지와 동일)
+interface MessageLog {
+  timestamp: string;
+  type: "INFO" | "SUCCESS" | "WARNING" | "ERROR";
+  message: string;
 }
+
+type BadgeVariant = "secondary" | "default" | "destructive" | "outline";
+
+const StatusBadge = ({ status }: { status: string }) => {
+  const getStatusConfig = () => {
+    switch (status) {
+      case "connecting":
+        return {
+          variant: "secondary" as BadgeVariant,
+          icon: <Activity className="h-3 w-3 mr-1 animate-spin" />,
+          label: "연결 중",
+          className: "bg-blue-500",
+        };
+      case "connected":
+        return {
+          variant: "default" as BadgeVariant,
+          icon: <Power className="h-3 w-3 mr-1" />,
+          label: "연결됨",
+          className: "bg-green-500",
+        };
+      case "storeError":
+        return {
+          variant: "destructive" as BadgeVariant,
+          icon: <AlertCircle className="h-3 w-3 mr-1" />,
+          label: "오류",
+        };
+      default:
+        return {
+          variant: "destructive" as BadgeVariant,
+          icon: <AlertCircle className="h-3 w-3 mr-1" />,
+          label: "미연결",
+        };
+    }
+  };
+
+  const config = getStatusConfig();
+  return (
+    <Badge variant={config.variant} className={config.className}>
+      {config.icon}
+      {config.label}
+    </Badge>
+  );
+};
 
 // inspection 페이지와 동일한 모델 인터페이스 사용
 interface InspectionModel {
@@ -76,15 +119,25 @@ interface InspectionModel {
   p3_upper_limit: number;
 }
 
-// 검사 상태
-type InspectionStatus = "idle" | "scanning" | "running" | "completed" | "error";
+// 검사 상태는 store에서 관리됨
 
 export default function SafetyInspectionPage() {
-  // 상태 관리
-  const [status, setStatus] = useState<InspectionStatus>("idle");
-  const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  // useInspectionStore 사용 (inspection 페이지와 동일)
+  const store = useInspectionStore();
+  const [isMounted, setIsMounted] = useState(false);
+
+  // safety-inspection 전용 상태 (이제 store에서 관리)
+  const [logs, setLogs] = useState<MessageLog[]>([]);
+
+  // store에서 안전시험 상태 가져오기
+  const {
+    safetyInspectionStatus,
+    safetyInspectionItems,
+    currentSafetyStep,
+    error: storeError,
+    connectedPowerMeter,
+    powerMeterStatus,
+  } = store;
 
   // Zustand 스토어 사용
   const {
@@ -128,18 +181,14 @@ export default function SafetyInspectionPage() {
   );
   const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-  // WebSocket 연결 (선택적)
-  const { isConnected: wsConnected, lastMessage } = useWebSocket(
-    "ws://localhost:8000/ws"
-  );
-
   // 가상 상태 객체 (inspection 페이지 호환성을 위해)
   const virtualStatus = {
-    is_listening: status === "running" && wsConnected,
-    connected_devices: wsConnected ? 1 : 0,
+    is_listening:
+      safetyInspectionStatus === "running" && store.sseStatus === "connected",
+    connected_devices: store.sseStatus === "connected" ? 1 : 0,
     total_devices: 1,
     current_barcode: barcode || null,
-    phase: status === "running" ? currentStep : null,
+    phase: safetyInspectionStatus === "running" ? currentSafetyStep : null,
     progress: null,
   };
 
@@ -151,65 +200,164 @@ export default function SafetyInspectionPage() {
   // 가상 자동검사 상태 (inspection 페이지 호환성을 위해)
   const autoInspection = {
     isRunning: false,
-    currentStep: null,
+    currentSafetyStep: null,
     currentPhase: null,
     remainingTime: 0,
   };
 
-  // 3대 안전검사 항목 상태
-  const [safetyItems, setSafetyItems] = useState<SafetyInspectionItem[]>([
-    {
-      id: "dielectric",
-      name: "내전압",
-      nameEn: "Dielectric Strength",
-      unit: "mA",
-      sourceVoltage: "1.8kV",
-      limitValue: 30.0,
-      limitDirection: "down",
-      currentValue: null,
-      result: "PENDING",
-      isCompleted: false,
-    },
-    {
-      id: "insulation",
-      name: "절연저항",
-      nameEn: "Insulation Resistance",
-      unit: "MΩ",
-      sourceVoltage: "0.5kV",
-      limitValue: 10.0,
-      limitDirection: "up",
-      currentValue: null,
-      result: "PENDING",
-      isCompleted: false,
-    },
-    {
-      id: "ground",
-      name: "접지연속",
-      nameEn: "Ground Continuity",
-      unit: "mΩ",
-      sourceVoltage: "25A",
-      limitValue: 100.0,
-      limitDirection: "down",
-      currentValue: null,
-      result: "PENDING",
-      isCompleted: false,
-    },
-  ]);
+  // 3대 안전검사 항목은 store에서 관리
 
-  // 계산된 값들
-  const completedItems = safetyItems.filter((item) => item.isCompleted).length;
-  const passedItems = safetyItems.filter(
+  // 실시간 로그 상태 (inspection 페이지와 동일)
+  const [isExecutingCommand, setIsExecutingCommand] = useState(false);
+
+  // 계산된 값들 (store에서 관리)
+  const completedItems = safetyInspectionItems.filter(
+    (item) => item.isCompleted
+  ).length;
+  const passedItems = safetyInspectionItems.filter(
     (item) => item.result === "PASS"
   ).length;
-  const failedItems = safetyItems.filter(
+  const failedItems = safetyInspectionItems.filter(
     (item) => item.result === "FAIL"
   ).length;
   const overallResult =
     failedItems > 0
       ? "FAIL"
-      : completedItems === safetyItems.length
+      : completedItems === safetyInspectionItems.length
       ? "PASS"
       : "PENDING";
+
+  // 실시간 로그 추가 함수 (inspection 페이지와 동일)
+  const addLog = useCallback((type: MessageLog["type"], message: string) => {
+    const newLog: MessageLog = {
+      timestamp: new Date().toLocaleTimeString("ko-KR"),
+      type,
+      message,
+    };
+    setLogs((prev) => [...prev.slice(-19), newLog]); // 최대 20개까지만 유지
+  }, []);
+
+  // 안전시험기 응답 파싱 함수 (애뮬레이터 응답 형식에 맞게 수정)
+  const parseSafetyResponse = useCallback(
+    (
+      response: string,
+      itemId: string
+    ): { value: number; result: "PASS" | "FAIL" } => {
+      try {
+        console.log(`🔍 [SAFETY] 파싱할 응답: "${response}" (항목: ${itemId})`);
+
+        // 애뮬레이터 응답 형식: "ACW,1000.0V,0.374mA,0.5mA,PASS"
+        const parts = response.split(",");
+        console.log(`🔍 [SAFETY] 분할된 부분들:`, parts);
+
+        if (parts.length >= 5 && parts[2] && parts[4]) {
+          // parts[0]: 테스트 타입 (ACW, IR, GB)
+          // parts[1]: 전압 (1000.0V)
+          // parts[2]: 측정값 (0.374mA, 0.66MΩ, 0.045Ω)
+          // parts[3]: 기준값 (0.5mA, 1.0MΩ, 0.100Ω)
+          // parts[4]: 결과 (PASS, FAIL)
+
+          const result = parts[4].trim() === "PASS" ? "PASS" : "FAIL";
+          const valueStr = parts[2].trim();
+
+          console.log(`🔍 [SAFETY] 측정값 문자열: "${valueStr}"`);
+
+          // 값 추출 (단위 제거)
+          let value = 0;
+          if (itemId === "dielectric") {
+            // mA 단위: "0.374mA" -> 0.374
+            value = parseFloat(valueStr.replace(/mA/i, ""));
+          } else if (itemId === "insulation") {
+            // MΩ 단위: "0.66MΩ" -> 0.66
+            value = parseFloat(valueStr.replace(/MΩ/i, ""));
+          } else if (itemId === "ground") {
+            // Ω 단위: "0.045Ω" -> 0.045
+            value = parseFloat(valueStr.replace(/Ω/i, ""));
+          }
+
+          console.log(`🔍 [SAFETY] 파싱된 값: ${value}, 결과: ${result}`);
+          return { value: isNaN(value) ? 0 : value, result };
+        }
+      } catch (storeError) {
+        console.error("응답 파싱 오류:", storeError);
+      }
+
+      console.log(`❌ [SAFETY] 파싱 실패, 기본값 반환`);
+      return { value: 0, result: "FAIL" };
+    },
+    []
+  );
+
+  // 안전시험기 명령 실행 함수
+  const executeSafetyCommand = useCallback(
+    async (
+      deviceId: number,
+      command: string,
+      itemId: string
+    ): Promise<{
+      success: boolean;
+      response?: string;
+      storeError?: string;
+    }> => {
+      try {
+        setIsExecutingCommand(true);
+
+        // 명령 전송 로그
+        console.log(
+          `🚀 [SAFETY] 명령 전송 시작: ${command} (디바이스 ID: ${deviceId})`
+        );
+        addLog("INFO", `[안전시험기] 명령 전송: ${command}`);
+
+        const response = await apiClient.sendCommand(deviceId, command, 2.0); // 2초 대기
+        console.log(`📡 [SAFETY] API 응답 받음:`, response);
+
+        if (
+          response &&
+          typeof response === "object" &&
+          "success" in response &&
+          response.success &&
+          "response" in response &&
+          response.response
+        ) {
+          // 응답 수신 로그
+          console.log(
+            `✅ [SAFETY] 응답 수신 성공: ${String(response.response)}`
+          );
+          addLog(
+            "SUCCESS",
+            `[안전시험기] 원데이터: ${String(response.response)}`
+          );
+
+          // 응답 파싱하여 결과 추출
+          const result = parseSafetyResponse(String(response.response), itemId);
+
+          return {
+            success: true,
+            response: String(response.response),
+          };
+        } else {
+          const storeErrorMsg = "명령 실행 실패: 응답 없음";
+          console.log(`❌ [SAFETY] 응답 없음:`, response);
+          addLog("ERROR", `[안전시험기] ${storeErrorMsg}`);
+          return {
+            success: false,
+            storeError: storeErrorMsg,
+          };
+        }
+      } catch (storeError) {
+        const storeErrorMsg = `명령 실행 오류: ${storeError}`;
+        console.log(`💥 [SAFETY] 명령 실행 오류:`, storeError);
+        addLog("ERROR", `[안전시험기] ${storeErrorMsg}`);
+        return {
+          success: false,
+          storeError: storeErrorMsg,
+        };
+      } finally {
+        setIsExecutingCommand(false);
+      }
+    },
+    [addLog, parseSafetyResponse]
+  );
 
   // 바코드 스캐너 실시간 감청 시작
   const startBarcodeListening = async () => {
@@ -237,6 +385,7 @@ export default function SafetyInspectionPage() {
       );
 
       if (!response.ok) {
+        // 오빠룰: 'console.storeError'는 존재하지 않으므로 console.error로 변경
         console.error(
           `바코드 감청 시작 API 오류: ${response.status} ${response.statusText}`
         );
@@ -301,109 +450,151 @@ export default function SafetyInspectionPage() {
     }
   };
 
-  // 검사 시뮬레이션 함수
-  const simulateInspection = useCallback(
+  // 실제 안전시험기 검사 함수
+  const executeSafetyInspection = useCallback(
     async (itemId: string, limitValue: number): Promise<void> => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          setSafetyItems((items) =>
-            items.map((item) => {
-              if (item.id === itemId) {
-                // 랜덤한 측정값 생성 (70% 확률로 PASS)
-                const randomValue =
-                  item.limitDirection === "up"
-                    ? limitValue +
-                      (Math.random() > 0.3
-                        ? Math.random() * 5
-                        : -Math.random() * 2)
-                    : limitValue -
-                      (Math.random() > 0.3
-                        ? Math.random() * 20
-                        : -Math.random() * 10);
+      // store에서 직접 안전시험기 찾기 (inspection 페이지와 동일한 방식)
+      const devices = (await apiClient.getDevices()) as DeviceInfo[];
+      console.log("🔍 [SAFETY] 전체 디바이스 목록:", devices);
 
-                const result =
-                  item.limitDirection === "up"
-                    ? randomValue >= limitValue
-                      ? "PASS"
-                      : "FAIL"
-                    : randomValue <= limitValue
-                    ? "PASS"
-                    : "FAIL";
+      // 안전시험기만 먼저 필터링
+      const allSafetyDevices = devices.filter(
+        (device: any) => device.device_type === "SAFETY_TESTER"
+      );
+      console.log(
+        "🔍 [SAFETY] 모든 안전시험기 (연결 상태 무관):",
+        allSafetyDevices
+      );
 
-                return {
-                  ...item,
-                  currentValue: parseFloat(randomValue.toFixed(2)),
-                  result,
-                  isCompleted: true,
-                };
-              }
-              return item;
-            })
-          );
-          resolve();
-        }, 2000); // 2초 딜레이
+      // 각 안전시험기의 연결 상태 확인
+      allSafetyDevices.forEach((device, index) => {
+        console.log(`🔍 [SAFETY] 안전시험기 ${index + 1}:`, {
+          name: device.name,
+          device_type: device.device_type,
+          connected: device.connected,
+          connection_status: device.connection_status,
+          id: device.id,
+        });
       });
+
+      const safetyDevices = allSafetyDevices.filter(
+        (device: any) =>
+          device.connected || device.connection_status === "CONNECTED"
+      );
+
+      console.log(
+        "🔍 [SAFETY] 필터링된 안전시험기 (connected=true):",
+        safetyDevices
+      );
+      console.log("🔍 [SAFETY] 안전시험기 개수:", safetyDevices.length);
+
+      if (safetyDevices.length === 0) {
+        console.log("❌ [SAFETY] 연결된 안전시험기가 없음");
+        addLog("ERROR", "[안전시험기] 연결된 안전시험기가 없습니다.");
+        return;
+      }
+
+      const connectedDevice = safetyDevices[0];
+      if (!connectedDevice) {
+        console.log("❌ [SAFETY] 연결된 안전시험기 디바이스가 없음");
+        addLog("ERROR", "[안전시험기] 연결된 안전시험기 디바이스가 없습니다.");
+        return;
+      }
+
+      const item = safetyInspectionItems.find((item) => item.id === itemId);
+      if (!item) {
+        addLog("ERROR", `[안전시험기] 검사 항목을 찾을 수 없습니다: ${itemId}`);
+        return;
+      }
+
+      try {
+        // 안전시험기 명령 실행
+        const result = await executeSafetyCommand(
+          connectedDevice.id,
+          item.command,
+          itemId
+        );
+
+        if (result.success && result.response) {
+          // 응답 파싱
+          const parsedResult = parseSafetyResponse(result.response, itemId);
+
+          // 결과 업데이트
+          const updatedItems = safetyInspectionItems.map((safetyItem) => {
+            if (safetyItem.id === itemId) {
+              return {
+                ...safetyItem,
+                currentValue: parsedResult.value,
+                result: parsedResult.result,
+                isCompleted: true,
+                response: result.response,
+                error: undefined,
+              };
+            }
+            return safetyItem;
+          });
+          store.setSafetyInspectionItems(updatedItems);
+        } else {
+          // 오류 처리
+          const updatedItems = safetyInspectionItems.map((safetyItem) => {
+            if (safetyItem.id === itemId) {
+              return {
+                ...safetyItem,
+                result: "FAIL" as const,
+                isCompleted: true,
+                error: result.storeError,
+              };
+            }
+            return safetyItem;
+          });
+          store.setSafetyInspectionItems(updatedItems);
+        }
+      } catch (storeError) {
+        addLog("ERROR", `[안전시험기] 검사 실행 오류: ${storeError}`);
+        const updatedItems = safetyInspectionItems.map((safetyItem) => {
+          if (safetyItem.id === itemId) {
+            return {
+              ...safetyItem,
+              result: "FAIL" as const,
+              isCompleted: true,
+              error: String(storeError),
+            };
+          }
+          return safetyItem;
+        });
+        store.setSafetyInspectionItems(updatedItems);
+      }
     },
-    [setSafetyItems]
+    [
+      connectedDevices,
+      safetyInspectionItems,
+      store,
+      executeSafetyCommand,
+      parseSafetyResponse,
+      addLog,
+    ]
   );
 
-  // 순차적 검사 실행
-  const runSequentialInspection = useCallback(async () => {
-    const selectedModel = inspectionModels.find(
-      (m) => m.id === selectedModelId
-    );
-    if (!selectedModel) return;
+  // 순차적 검사 실행은 store에서 관리됨
 
-    try {
-      // 1. 내전압 검사 (P1)
-      setCurrentStep("내전압 검사 중...");
-      await simulateInspection("dielectric", selectedModel.p1_lower_limit);
+  // inspection 페이지와 동일한 검사 시작 함수
+  const handleStartInspection = useCallback(() => {
+    const barcode = store.currentBarcode || `TEST_${Date.now()}`;
+    store.startSafetyInspection(barcode);
+    addLog("INFO", `안전시험 시작: ${barcode}`);
+  }, [store, addLog]);
 
-      // 2. 절연저항 검사 (P2)
-      setCurrentStep("절연저항 검사 중...");
-      await simulateInspection("insulation", selectedModel.p2_lower_limit);
-
-      // 3. 접지연속 검사 (P3)
-      setCurrentStep("접지연속 검사 중...");
-      await simulateInspection("ground", selectedModel.p3_lower_limit);
-
-      setCurrentStep("검사 완료");
-      setStatus("completed");
-    } catch (err) {
-      setError("검사 중 오류가 발생했습니다");
-      setStatus("error");
-    }
-  }, [inspectionModels, selectedModelId, simulateInspection]);
-
-  // 바코드 제출 처리
+  // 바코드 제출 처리 (inspection 페이지와 동일)
   const handleBarcodeSubmit = useCallback(
     async (e?: React.FormEvent) => {
       if (e) e.preventDefault();
-
-      if (!barcode.trim()) return;
-
-      setStatus("running");
-      setError(null);
-      setCurrentStep("검사 시작");
-
-      // 모든 항목 초기화
-      setSafetyItems((items) =>
-        items.map((item) => ({
-          ...item,
-          currentValue: null,
-          result: "PENDING",
-          isCompleted: false,
-        }))
-      );
-
-      // 순차적으로 검사 실행
-      await runSequentialInspection();
+      handleStartInspection();
     },
-    [barcode, runSequentialInspection]
+    [handleStartInspection]
   );
 
   /**
-   * 바코드 데이터 수신 시 처리 함수
+   * 바코드 데이터 수신 시 처리 함수 (inspection 페이지와 동일한 방식)
    * @param barcodeData 수신된 바코드 문자열
    */
   const handleBarcodeReceived = useCallback(
@@ -444,20 +635,63 @@ export default function SafetyInspectionPage() {
       console.log(
         "✅ [FRONTEND] 안전검사 페이지 초기화 완료 - 수동 연결 버튼을 사용하세요"
       );
-    } catch (error) {
+    } catch (storeError) {
       console.error("❌ [FRONTEND] 안전검사 페이지 초기화 중 오류 발생!");
       console.error("📋 [FRONTEND] 초기화 에러 상세:", {
-        error: error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        storeError: storeError,
+        message:
+          storeError instanceof Error ? storeError.message : String(storeError),
+        stack: storeError instanceof Error ? storeError.stack : undefined,
       });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 페이지 진입 시 초기화
+  // SSE는 useInspectionStore에서 관리됨
+
+  // inspection 페이지와 동일한 초기화 로직
   useEffect(() => {
-    initializeSafetyInspectionPage();
-  }, [initializeSafetyInspectionPage]);
+    setIsMounted(true);
+    store.initialize();
+
+    const handleBeforeUnload = () => {
+      store.disconnectAll();
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // safety-inspection 전용 초기화
+  useEffect(() => {
+    if (isMounted) {
+      initializeSafetyInspectionPage();
+    }
+  }, [isMounted, initializeSafetyInspectionPage]);
+
+  // 바코드 수신 처리 (inspection 페이지와 동일한 방식)
+  useEffect(() => {
+    if (!isMounted || !store.currentBarcode) return;
+
+    if (store.currentBarcode !== barcode) {
+      console.log("📱 [SAFETY] 바코드 수신됨:", store.currentBarcode);
+      handleBarcodeReceived(store.currentBarcode);
+    }
+  }, [isMounted, store.currentBarcode, barcode, handleBarcodeReceived]);
+
+  // 안전시험 항목 변화 감지하여 로그 추가
+  useEffect(() => {
+    if (!isMounted) return;
+
+    safetyInspectionItems.forEach((item) => {
+      if (item.isCompleted && item.currentValue !== null) {
+        const resultText = item.result === "PASS" ? "합격" : "불합격";
+        addLog(
+          item.result === "PASS" ? "SUCCESS" : "ERROR",
+          `[${item.name}] ${item.currentValue}${item.unit} - ${resultText}`
+        );
+      }
+    });
+  }, [isMounted, safetyInspectionItems, addLog]);
 
   // 안전시험기 목록 로드
   const loadSafetyTesterDevices = useCallback(async () => {
@@ -508,16 +742,17 @@ export default function SafetyInspectionPage() {
       setConnectionError("");
 
       console.log("✅ [FRONTEND] 안전시험기 목록 로드 완료");
-    } catch (error) {
+    } catch (storeError) {
       console.error("❌ [FRONTEND] 안전시험기 목록 조회 실패!");
       console.error("📋 [FRONTEND] 에러 상세:", {
-        error: error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        storeError: storeError,
+        message:
+          storeError instanceof Error ? storeError.message : String(storeError),
+        stack: storeError instanceof Error ? storeError.stack : undefined,
       });
 
       setDeviceConnectionStatus("error");
-      setConnectionError(`안전시험기 목록 조회 실패: ${error}`);
+      setConnectionError(`안전시험기 목록 조회 실패: ${storeError}`);
     }
   }, [setConnectionError, setConnectedDevices, setDeviceConnectionStatus]);
 
@@ -578,28 +813,21 @@ export default function SafetyInspectionPage() {
         `✅ [FRONTEND] ${barcodeDevices.length}개의 바코드 스캐너 발견`
       );
       console.log("✅ [FRONTEND] 바코드 스캐너 목록 로드 완료");
-    } catch (error) {
+    } catch (storeError) {
       console.error("❌ [FRONTEND] 바코드 스캐너 목록 조회 실패!");
       console.error("📋 [FRONTEND] 에러 상세:", {
-        error: error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        storeError: storeError,
+        message:
+          storeError instanceof Error ? storeError.message : String(storeError),
+        stack: storeError instanceof Error ? storeError.stack : undefined,
       });
 
       setBarcodeConnectionStatus("error");
-      setBarcodeConnectionError(`바코드 스캐너 목록 조회 실패: ${error}`);
+      setBarcodeConnectionError(`바코드 스캐너 목록 조회 실패: ${storeError}`);
     }
   }, [setBarcodeConnectionError, setBarcodeConnectionStatus, setBarcodePort]);
 
-  // WebSocket 메시지 처리
-  useEffect(() => {
-    if (lastMessage && lastMessage.type === "barcode_scanned") {
-      const barcodeData = lastMessage.data?.barcode;
-      if (barcodeData) {
-        handleBarcodeReceived(barcodeData);
-      }
-    }
-  }, [lastMessage, handleBarcodeReceived]);
+  // SSE 메시지 처리는 connectSse 함수에서 처리됨
 
   // inspection 페이지와 동일한 모델 로딩 로직
   const loadInspectionModels = useCallback(async () => {
@@ -619,11 +847,11 @@ export default function SafetyInspectionPage() {
       }
     } catch (err) {
       console.error("검사 모델 로드 오류:", err);
-      setError("검사 모델을 불러올 수 없습니다");
+      store.setError("검사 모델을 불러올 수 없습니다");
     } finally {
       setIsLoadingModels(false);
     }
-  }, [setIsLoadingModels, setInspectionModels, setSelectedModelId]);
+  }, [setIsLoadingModels, setInspectionModels, setSelectedModelId, store]);
 
   // 안전시험기 수동 연결
   const connectSafetyTester = async () => {
@@ -700,27 +928,28 @@ export default function SafetyInspectionPage() {
           connectionError: "",
         });
       } else {
-        const errorText = await response.text();
+        const storeErrorText = await response.text();
         console.error(`❌ [FRONTEND] ${targetDevice.name} 연결 실패!`);
         console.error("📋 [FRONTEND] 에러 응답:", {
           status: response.status,
           statusText: response.statusText,
-          errorText: errorText,
+          storeErrorText: storeErrorText,
         });
 
         setDeviceConnectionStatus("error");
-        setConnectionError(`연결 실패: ${errorText}`);
+        setConnectionError(`연결 실패: ${storeErrorText}`);
       }
-    } catch (error) {
+    } catch (storeError) {
       console.error("❌ [FRONTEND] 안전시험기 연결 오류!");
       console.error("📋 [FRONTEND] 에러 상세:", {
-        error: error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        storeError: storeError,
+        message:
+          storeError instanceof Error ? storeError.message : String(storeError),
+        stack: storeError instanceof Error ? storeError.stack : undefined,
       });
 
       setDeviceConnectionStatus("error");
-      setConnectionError(`연결 오류: ${error}`);
+      setConnectionError(`연결 오류: ${storeError}`);
     }
   };
 
@@ -767,116 +996,91 @@ export default function SafetyInspectionPage() {
 
         console.log("✅ [FRONTEND] 바코드 스캐너 모든 상태 업데이트 완료");
       } else {
-        const errorMessage =
+        const storeErrorMessage =
           result && typeof result === "object" && "message" in result
             ? String((result as any).message)
             : "바코드 스캐너 연결 실패";
         console.error("❌ [FRONTEND] 바코드 스캐너 연결 실패!");
-        console.error("📋 [FRONTEND] 에러 메시지:", errorMessage);
+        console.error("📋 [FRONTEND] 에러 메시지:", storeErrorMessage);
         console.error("📋 [FRONTEND] 원본 응답:", result);
 
         setBarcodeConnectionStatus("error");
-        setBarcodeConnectionError(errorMessage);
+        setBarcodeConnectionError(storeErrorMessage);
       }
-    } catch (error) {
+    } catch (storeError) {
       console.error("❌ [FRONTEND] 바코드 스캐너 연결 오류!");
       console.error("📋 [FRONTEND] 에러 상세:", {
-        error: error,
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        storeError: storeError,
+        message:
+          storeError instanceof Error ? storeError.message : String(storeError),
+        stack: storeError instanceof Error ? storeError.stack : undefined,
       });
 
       setBarcodeConnectionStatus("error");
-      setBarcodeConnectionError(`연결 오류: ${error}`);
+      setBarcodeConnectionError(`연결 오류: ${storeError}`);
     }
   };
 
-  // inspection 페이지 호환 함수들
-  const getStatusBadge = () => {
-    if (!wsConnected) {
-      return <Badge variant="destructive">연결 끊김</Badge>;
-    }
-    if (status === "running") {
-      return <Badge variant="default">검사 중</Badge>;
-    }
-    if (status === "completed") {
-      return <Badge variant="secondary">완료</Badge>;
-    }
-    if (status === "error") {
-      return <Badge variant="destructive">오류</Badge>;
-    }
-    return <Badge variant="secondary">대기 중</Badge>;
-  };
-
-  const getProgressBar = () => {
-    if (!virtualStatus.progress) return null;
-
-    return (
-      <div className="w-full bg-secondary rounded-full h-2">
-        <div
-          className="bg-primary h-2 rounded-full transition-all duration-300"
-          style={{ width: `${virtualStatus.progress}%` }}
-        />
-      </div>
-    );
-  };
-
-  const handleStartListening = async () => {
-    // 바코드 스캐너 연결 시작
-    if (barcodePort && !barcodeListening) {
-      await connectBarcodeScanner();
-    }
-    // safety-inspection에서는 바로 검사 시작
-    setStatus("running");
-  };
-
+  // 검사 중지 함수
   const handleStopInspection = async () => {
-    // 바코드 스캐너 연결 중지
-    if (barcodeListening) {
-      try {
-        await apiClient.stopBarcodeListening();
-        setBarcodeListening(false);
-        setBarcodeConnectionStatus("disconnected");
-        setBarcodeConnectionError("");
-      } catch (error) {
-        console.error("바코드 스캐너 중지 오류:", error);
+    try {
+      // 바코드 스캐너 연결 중지
+      if (barcodeListening) {
+        try {
+          await apiClient.stopBarcodeListening();
+          setBarcodeListening(false);
+          setBarcodeConnectionStatus("disconnected");
+          setBarcodeConnectionError("");
+        } catch (storeError) {
+          console.warn(
+            "바코드 스캐너 중지 API 호출 실패, 로컬에서만 중지:",
+            storeError
+          );
+          // API 호출 실패해도 로컬 상태는 중지
+          setBarcodeListening(false);
+          setBarcodeConnectionStatus("disconnected");
+          setBarcodeConnectionError("");
+        }
       }
+
+      // 검사 상태 중지
+      store.setSafetyInspectionStatus("idle");
+      store.setCurrentStep(null);
+
+      // 진행 중인 안전 시험 항목들을 PENDING으로 리셋
+      const resetItems = safetyInspectionItems.map((item) => ({
+        ...item,
+        result: "PENDING" as const,
+        isCompleted: false,
+        currentValue: null,
+      }));
+      store.setSafetyInspectionItems(resetItems);
+
+      // 로그에 중지 메시지 추가
+      addLog("INFO", "검사가 사용자에 의해 중지되었습니다.");
+    } catch (storeError) {
+      console.error("검사 중지 처리 중 오류:", storeError);
+      // 오류가 발생해도 강제로 중지
+      store.setSafetyInspectionStatus("idle");
+      store.setCurrentStep(null);
     }
-    // safety-inspection에서는 바로 검사 중지
-    setStatus("idle");
-    setCurrentStep(null);
-    setError(null);
-  };
-
-  const refreshStatus = () => {
-    // 상태 새로고침 (빈 함수)
-  };
-
-  // 검사 중지
-  const stopInspection = () => {
-    setStatus("idle");
-    setCurrentStep(null);
-    setError(null);
   };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">3대 안전검사</h1>
-        <p className="text-muted-foreground">
-          내전압, 절연저항, 접지연속 검사를 순차적으로 수행합니다
-        </p>
       </div>
 
-      {error && (
+      {storeError && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {error}
+            {storeError}
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setError(null)}
+              onClick={() => store.setError(null)}
               className="ml-2"
             >
               닫기
@@ -897,274 +1101,192 @@ export default function SafetyInspectionPage() {
               <CardDescription>검사 상태 및 제어 옵션</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* 안전시험기 연결 상태 */}
-              <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    안전시험기
-                  </span>
-                  <Badge
-                    variant={
-                      deviceConnectionStatus === "connected"
-                        ? "default"
-                        : deviceConnectionStatus === "connecting"
-                        ? "secondary"
-                        : "destructive"
-                    }
-                    className={
-                      deviceConnectionStatus === "connected"
-                        ? "bg-green-500"
-                        : deviceConnectionStatus === "connecting"
-                        ? "bg-blue-500"
-                        : "bg-red-500"
-                    }
-                  >
-                    {deviceConnectionStatus === "connected" && (
-                      <Shield className="h-3 w-3 mr-1" />
-                    )}
-                    {deviceConnectionStatus === "connecting" && (
-                      <Activity className="h-3 w-3 mr-1" />
-                    )}
-                    {deviceConnectionStatus === "error" && (
-                      <AlertCircle className="h-3 w-3 mr-1" />
-                    )}
-                    {deviceConnectionStatus === "disconnected" && (
-                      <AlertCircle className="h-3 w-3 mr-1" />
-                    )}
-                    {deviceConnectionStatus === "connected" && "연결됨"}
-                    {deviceConnectionStatus === "connecting" && "연결 중"}
-                    {deviceConnectionStatus === "error" && "연결 실패"}
-                    {deviceConnectionStatus === "disconnected" && "미연결"}
-                  </Badge>
-                </div>
-
-                {deviceConnectionStatus === "connected" &&
-                connectedDevices.length > 0 ? (
-                  <div className="space-y-2">
-                    {connectedDevices.map((device, index) => (
-                      <div
-                        key={index}
-                        className="p-2 bg-green-50 border border-green-200 rounded text-xs"
-                      >
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium text-green-800">
-                            {device.name}
-                          </span>
-                          <span className="text-green-600 font-mono">
-                            {device.port}
-                          </span>
-                        </div>
-                        <div className="text-green-600 mt-1">
-                          {device.manufacturer} {device.model}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : deviceConnectionStatus === "connecting" ? (
-                  <div className="text-xs text-blue-600 p-2 bg-blue-50 border border-blue-200 rounded flex items-center gap-2">
-                    <Activity className="h-3 w-3 animate-spin" />
-                    안전시험기 연결 중...
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {connectionError && (
-                      <div className="text-xs text-red-600 p-2 bg-red-50 border border-red-200 rounded">
-                        {connectionError}
+              {/* 안전시험기 상태 */}
+              <div>
+                <Label>안전시험기</Label>
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                  <div className="flex flex-col">
+                    <StatusBadge status={deviceConnectionStatus} />
+                    {connectedDevices.length > 0 && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        {connectedDevices[0]?.port} /{" "}
+                        {connectedDevices[0]?.baud_rate || "N/A"}
                       </div>
                     )}
+                  </div>
+                  {deviceConnectionStatus !== "connected" && (
                     <Button
                       onClick={connectSafetyTester}
                       size="sm"
                       variant="outline"
-                      className="w-full text-xs"
-                      disabled={connectedDevices.length === 0}
+                      disabled={
+                        deviceConnectionStatus === "connecting" ||
+                        connectedDevices.length === 0
+                      }
                     >
-                      <Activity className="h-3 w-3 mr-1" />
-                      안전시험기 연결
+                      연결
                     </Button>
-                  </div>
+                  )}
+                </div>
+                {connectionError && (
+                  <p className="text-xs text-red-500 mt-1">{connectionError}</p>
                 )}
               </div>
 
               {/* 바코드 스캐너 상태 */}
-              <div className="space-y-2">
+              <div>
                 <Label>바코드 스캐너</Label>
-                <div className="p-2 bg-gray-50 border rounded-md">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Scan className="h-4 w-4 text-gray-600" />
-                      <span className="text-sm">
-                        {barcodePort ? `포트: ${barcodePort}` : "설정되지 않음"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {barcodeListening ? (
-                        <Badge variant="default" className="bg-green-500">
-                          <Activity className="h-3 w-3 mr-1" />
-                          수신중
-                        </Badge>
-                      ) : barcodePort ? (
-                        <Badge
-                          variant={
-                            barcodeConnectionStatus === "connecting"
-                              ? "secondary"
-                              : barcodeConnectionStatus === "connected"
-                              ? "default"
-                              : barcodeConnectionStatus === "error"
-                              ? "destructive"
-                              : "secondary"
-                          }
-                          className={
-                            barcodeConnectionStatus === "connecting"
-                              ? "bg-blue-500"
-                              : barcodeConnectionStatus === "connected"
-                              ? "bg-green-500"
-                              : barcodeConnectionStatus === "error"
-                              ? "bg-red-500"
-                              : "bg-gray-500"
-                          }
-                        >
-                          {barcodeConnectionStatus === "connecting" && (
-                            <Activity className="h-3 w-3 mr-1" />
-                          )}
-                          {barcodeConnectionStatus === "connected" && (
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                          )}
-                          {barcodeConnectionStatus === "error" && (
-                            <AlertCircle className="h-3 w-3 mr-1" />
-                          )}
-                          {barcodeConnectionStatus === "connecting" && "연결중"}
-                          {barcodeConnectionStatus === "connected" && "연결됨"}
-                          {barcodeConnectionStatus === "error" && "오류"}
-                          {barcodeConnectionStatus === "disconnected" &&
-                            "시작중"}
-                        </Badge>
-                      ) : (
-                        <Badge variant="destructive">
-                          <AlertCircle className="h-3 w-3 mr-1" />
-                          미설정
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  {!barcodePort && (
-                    <div className="mt-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                      💡 장비 관리 페이지에서 바코드 스캐너를 먼저 설정해주세요
-                    </div>
-                  )}
-                  {barcodeConnectionStatus === "error" &&
-                    barcodeConnectionError && (
-                      <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
-                        ❌ {barcodeConnectionError}
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                  <div className="flex flex-col">
+                    <StatusBadge
+                      status={
+                        barcodeListening ? "connected" : barcodeConnectionStatus
+                      }
+                    />
+                    {barcodePort && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        {barcodePort} / 9600
                       </div>
                     )}
-
-                  {/* 바코드 스캐너 수동 연결 버튼 */}
-                  {!barcodeListening && barcodePort && (
-                    <div className="mt-2">
+                  </div>
+                  {barcodeConnectionStatus !== "connected" &&
+                    !barcodeListening && (
                       <Button
                         onClick={connectBarcodeScanner}
                         size="sm"
                         variant="outline"
-                        className="w-full text-xs"
-                        disabled={barcodeConnectionStatus === "connecting"}
+                        disabled={
+                          barcodeConnectionStatus === "connecting" ||
+                          !barcodePort
+                        }
                       >
-                        <Activity className="h-3 w-3 mr-1" />
-                        {barcodeConnectionStatus === "connecting"
-                          ? "연결 중..."
-                          : "바코드 스캐너 연결"}
+                        연결
                       </Button>
-                    </div>
-                  )}
+                    )}
+                </div>
+                {barcodeConnectionError && (
+                  <p className="text-xs text-red-500 mt-1">
+                    {barcodeConnectionError}
+                  </p>
+                )}
+              </div>
 
-                  {barcodeListening && lastScannedBarcode && (
-                    <div className="mt-2 text-xs text-green-600">
-                      ✓ 마지막 스캔: {lastScannedBarcode}
-                      <span className="ml-2 px-1 py-0.5 bg-green-100 rounded text-green-700 font-medium">
-                        총 {scanCount}회
-                      </span>
+              {/* 실시간 연결 상태 */}
+              <div>
+                <Label>실시간 연결 상태</Label>
+                <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                  <div className="flex flex-col">
+                    <StatusBadge status={store.sseStatus} />
+                    <div className="text-xs text-gray-600 mt-1">
+                      {store.sseStatus === "connected"
+                        ? "실시간 연결됨"
+                        : "연결 안됨"}
                     </div>
+                  </div>
+                  {store.sseStatus !== "connected" && (
+                    <Button
+                      onClick={() => {
+                        console.log("🔄 [UI] SSE 재연결 시도");
+                        store._connectSse();
+                      }}
+                      size="sm"
+                      variant="outline"
+                    >
+                      재연결
+                    </Button>
                   )}
                 </div>
               </div>
 
-              {getProgressBar()}
-
               {/* 검사 모델 선택 */}
-              <div className="space-y-2">
-                <Label htmlFor="inspection-model">검사 모델</Label>
+              <div>
+                <Label>검사 모델</Label>
                 <Select
-                  value={selectedModelId?.toString() || ""}
-                  onValueChange={(value: string) =>
-                    setSelectedModelId(parseInt(value))
+                  value={store.selectedModelId?.toString() || ""}
+                  onValueChange={(value: string) => {
+                    const numValue = parseInt(value);
+                    if (!isNaN(numValue)) {
+                      store.setSelectedModelId(numValue);
+                    }
+                  }}
+                  disabled={
+                    store.isLoading || safetyInspectionStatus === "running"
                   }
-                  disabled={isLoadingModels || virtualStatus.is_listening}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="검사 모델 선택" />
+                    <SelectValue placeholder="모델 선택" />
                   </SelectTrigger>
-                  <SelectContent className="bg-white border border-gray-200">
-                    {inspectionModels.map((model) => (
-                      <SelectItem
-                        key={model.id}
-                        value={model.id.toString()}
-                        className="text-black hover:bg-gray-100 focus:bg-gray-100"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Database className="h-4 w-4 text-gray-600" />
-                          <span className="text-sm font-medium text-black">
-                            {model.model_name}
-                          </span>
-                        </div>
+                  <SelectContent>
+                    {store.inspectionModels.length > 0 ? (
+                      store.inspectionModels.map((model) => (
+                        <SelectItem key={model.id} value={model.id.toString()}>
+                          {model.model_name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="no-models" disabled>
+                        검사 모델이 없습니다
                       </SelectItem>
-                    ))}
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
               {/* 바코드 입력 */}
-              <form onSubmit={handleBarcodeSubmit} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="barcode">바코드</Label>
-                  {barcodeListening && (
-                    <span className="text-xs text-green-600 flex items-center gap-1">
-                      <Activity className="h-3 w-3" />
-                      스캐너에서 자동 입력
-                    </span>
-                  )}
-                </div>
+              <div>
+                <Label>바코드</Label>
                 <div className="flex gap-2">
                   <Input
-                    id="barcode"
-                    value={barcode}
-                    onChange={(e) => setBarcode(e.target.value)}
+                    value={store.currentBarcode || ""}
+                    onChange={(e) => store.setBarcode(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === "Enter" &&
+                        store.currentBarcode &&
+                        store.selectedModelId &&
+                        deviceConnectionStatus === "connected"
+                      ) {
+                        handleBarcodeSubmit();
+                      }
+                    }}
                     placeholder={
-                      barcodeListening
-                        ? "바코드 스캐너에서 자동 입력됩니다..."
-                        : "바코드를 입력하거나 스캐너를 설정하세요"
+                      store.isBarcodeScannerListening
+                        ? "바코드 스캔 대기 중..."
+                        : "바코드 스캔 또는 입력"
                     }
-                    disabled={!barcodeListening || isLoading}
+                    disabled={safetyInspectionStatus === "running"}
                     className={
-                      barcodeListening ? "bg-green-50 border-green-200" : ""
+                      store.isBarcodeScannerListening
+                        ? "border-green-500 bg-green-50"
+                        : ""
                     }
                   />
                   <Button
-                    type="submit"
+                    onClick={handleBarcodeSubmit}
                     size="icon"
-                    disabled={!barcodeListening || !barcode.trim() || isLoading}
-                    title="바코드 검사 시작"
+                    disabled={safetyInspectionStatus === "running"}
                   >
                     <Scan className="h-4 w-4" />
                   </Button>
                 </div>
-              </form>
+                {/* 바코드 스캔 상태 표시 */}
+                {store.isBarcodeScannerListening && (
+                  <div className="flex items-center gap-2 mt-2 text-xs text-green-600">
+                    <Activity className="h-3 w-3 animate-pulse" />
+                    <span>바코드 스캐너 대기 중...</span>
+                  </div>
+                )}
+              </div>
 
               {/* 제어 버튼 */}
               <div className="flex gap-2">
-                {!barcodeListening ? (
+                {safetyInspectionStatus !== "running" ? (
                   <Button
-                    onClick={handleStartListening}
-                    disabled={isLoading || !selectedModelId}
+                    onClick={handleBarcodeSubmit}
+                    disabled={
+                      !store.selectedModelId ||
+                      deviceConnectionStatus !== "connected"
+                    }
                     className="flex-1"
                   >
                     <Play className="h-4 w-4 mr-2" />
@@ -1174,22 +1296,12 @@ export default function SafetyInspectionPage() {
                   <Button
                     onClick={handleStopInspection}
                     variant="destructive"
-                    disabled={isLoading}
                     className="flex-1"
                   >
                     <Square className="h-4 w-4 mr-2" />
                     검사 중지
                   </Button>
                 )}
-
-                <Button
-                  onClick={refreshStatus}
-                  variant="outline"
-                  size="icon"
-                  disabled={isLoading}
-                >
-                  <Activity className="h-4 w-4" />
-                </Button>
               </div>
             </CardContent>
           </Card>
@@ -1198,7 +1310,7 @@ export default function SafetyInspectionPage() {
         {/* 3대 안전검사 결과 */}
         <div className="lg:col-span-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {safetyItems.map((item, index) => (
+            {safetyInspectionItems.map((item, index) => (
               <Card
                 key={item.id}
                 className={`relative ${
@@ -1206,7 +1318,8 @@ export default function SafetyInspectionPage() {
                     ? "ring-2 ring-green-500"
                     : item.result === "FAIL"
                     ? "ring-2 ring-red-500"
-                    : status === "running" && currentStep?.includes(item.name)
+                    : safetyInspectionStatus === "running" &&
+                      currentSafetyStep?.includes(item.name)
                     ? "ring-2 ring-blue-500"
                     : ""
                 }`}
@@ -1221,14 +1334,14 @@ export default function SafetyInspectionPage() {
                         <XCircle className="h-5 w-5 text-red-600" />
                       )}
                       {item.result === "PENDING" &&
-                        status === "running" &&
-                        currentStep?.includes(item.name) && (
+                        safetyInspectionStatus === "running" &&
+                        currentSafetyStep?.includes(item.name) && (
                           <Activity className="h-5 w-5 text-blue-600 animate-pulse" />
                         )}
                       {item.result === "PENDING" &&
                         !(
-                          status === "running" &&
-                          currentStep?.includes(item.name)
+                          safetyInspectionStatus === "running" &&
+                          currentSafetyStep?.includes(item.name)
                         ) && <Clock className="h-5 w-5 text-slate-400" />}
                       {item.name}
                     </CardTitle>
@@ -1297,98 +1410,78 @@ export default function SafetyInspectionPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* 응답 데이터 표시 */}
+                    {item.response && (
+                      <div className="text-xs bg-gray-100 p-2 rounded font-mono">
+                        <div className="text-gray-600 mb-1">응답:</div>
+                        <div className="text-gray-800 break-all">
+                          {item.response}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 오류 메시지 표시 */}
+                    {item.error && (
+                      <div className="text-xs bg-red-100 p-2 rounded text-red-800">
+                        <div className="font-medium mb-1">오류:</div>
+                        <div className="break-all">{item.error}</div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
 
                 {/* 자동 검사 진행 오버레이 */}
-                {status === "running" && currentStep?.includes(item.name) && (
-                  <div className="absolute top-2 right-2 bg-white rounded-lg p-2 shadow-md border">
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 rounded-full animate-pulse bg-blue-500"></div>
-                      <span className="text-xs font-medium text-blue-600">
-                        검사 중
-                      </span>
+                {safetyInspectionStatus === "running" &&
+                  currentSafetyStep?.includes(item.name) && (
+                    <div className="absolute top-2 right-2 bg-white rounded-lg p-2 shadow-md border">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full animate-pulse bg-blue-500"></div>
+                        <span className="text-xs font-medium text-blue-600">
+                          검사 중
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </Card>
             ))}
           </div>
 
-          {/* 전체 결과 요약 */}
-          <Card className="mt-6">
+          {/* 실시간 로그 (inspection 페이지와 동일) */}
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5" />
-                검사 결과 요약
+                <Activity className="h-4 w-4" />
+                실시간 로그
+                <Badge variant="outline">{logs.length}</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-5 gap-4">
-                <div className="text-center p-3 bg-slate-100 rounded">
-                  <div className="text-xl font-bold text-slate-800">
-                    {safetyItems.length}
-                  </div>
-                  <div className="text-xs text-slate-600">총 항목</div>
+            <CardContent className="max-h-64 overflow-y-auto bg-gray-900 text-green-400 p-3 rounded-md font-mono text-xs space-y-1">
+              {logs.length === 0 ? (
+                <div className="text-center text-gray-500 py-4">
+                  로그 대기 중...
                 </div>
-                <div className="text-center p-3 bg-blue-100 rounded">
-                  <div className="text-xl font-bold text-blue-600">
-                    {completedItems}
+              ) : (
+                logs.map((log, index) => (
+                  <div key={index} className="flex items-start gap-2">
+                    <span className="text-gray-400 shrink-0">
+                      [{log.timestamp}]
+                    </span>
+                    <span
+                      className={`${
+                        log.type === "SUCCESS"
+                          ? "text-green-400"
+                          : log.type === "WARNING"
+                          ? "text-yellow-400"
+                          : log.type === "ERROR"
+                          ? "text-red-400"
+                          : "text-blue-400"
+                      }`}
+                    >
+                      {log.message}
+                    </span>
                   </div>
-                  <div className="text-xs text-blue-600">완료</div>
-                </div>
-                <div className="text-center p-3 bg-green-100 rounded">
-                  <div className="text-xl font-bold text-green-600">
-                    {passedItems}
-                  </div>
-                  <div className="text-xs text-green-600">합격</div>
-                </div>
-                <div className="text-center p-3 bg-red-100 rounded">
-                  <div className="text-xl font-bold text-red-600">
-                    {failedItems}
-                  </div>
-                  <div className="text-xs text-red-600">불합격</div>
-                </div>
-                <div
-                  className={`text-center p-3 rounded ${
-                    overallResult === "PASS"
-                      ? "bg-green-200"
-                      : overallResult === "FAIL"
-                      ? "bg-red-200"
-                      : "bg-slate-200"
-                  }`}
-                >
-                  <div
-                    className={`text-xl font-bold ${
-                      overallResult === "PASS"
-                        ? "text-green-800"
-                        : overallResult === "FAIL"
-                        ? "text-red-800"
-                        : "text-slate-800"
-                    }`}
-                  >
-                    {overallResult}
-                  </div>
-                  <div
-                    className={`text-xs ${
-                      overallResult === "PASS"
-                        ? "text-green-700"
-                        : overallResult === "FAIL"
-                        ? "text-red-700"
-                        : "text-slate-700"
-                    }`}
-                  >
-                    최종 판정
-                  </div>
-                </div>
-              </div>
-              {barcode && (
-                <div className="mt-4 pt-4 border-t border-slate-200">
-                  <div className="text-sm text-slate-600">검사 대상</div>
-                  <div className="text-lg font-mono font-bold text-slate-800">
-                    {barcode}
-                  </div>
-                </div>
+                ))
               )}
             </CardContent>
           </Card>

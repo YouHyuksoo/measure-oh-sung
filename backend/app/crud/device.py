@@ -28,5 +28,11 @@ class CRUDDevice(CRUDBase[Device, DeviceCreate, DeviceUpdate]):
         return db.query(Device).filter(
             Device.device_type == DeviceType.POWER_METER
         ).first()
+    
+    def get_safety_tester(self, db: Session) -> Optional[Device]:
+        """안전시험기를 조회합니다."""
+        return db.query(Device).filter(
+            Device.device_type == DeviceType.SAFETY_TESTER
+        ).first()
 
 device = CRUDDevice(Device)

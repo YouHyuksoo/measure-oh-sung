@@ -1,3 +1,7 @@
+"""
+로그 관련 모델
+- SystemLog: 시스템 로그 관리
+"""
 from sqlalchemy import Column, String, Text, Integer, JSON, Enum as SQLEnum
 from enum import Enum
 from .base import Base, TimestampMixin

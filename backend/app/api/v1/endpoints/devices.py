@@ -13,7 +13,7 @@ from app import crud, schemas
 from app.db.database import get_db
 from app.models import Device
 from app.models.device import DeviceType, ConnectionStatus, CommandCategory
-from app.schemas.barcode_scanner import (
+from app.schemas.barcode import (
     BarcodeScannerSettingsCreate, 
     BarcodeScannerSettingsUpdate, 
     BarcodeScannerSettingsResponse,
@@ -345,7 +345,7 @@ def get_barcode_scanner_settings(
     db: Session = Depends(get_db)
 ):
     """모든 바코드 스캐너 설정 조회"""
-    from app.crud.barcode_scanner import get_barcode_scanner_settings
+    from app.crud.barcode import get_barcode_scanner_settings
     settings = get_barcode_scanner_settings(db, skip=skip, limit=limit)
     return settings
 
@@ -353,7 +353,7 @@ def get_barcode_scanner_settings(
 @router.get("/barcode/settings/active", response_model=Optional[BarcodeScannerSettingsResponse])
 def get_active_barcode_scanner_settings(db: Session = Depends(get_db)):
     """활성화된 바코드 스캐너 설정 조회"""
-    from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+    from app.crud.barcode import get_active_barcode_scanner_settings
     settings = get_active_barcode_scanner_settings(db)
     return settings
 
@@ -364,7 +364,7 @@ def create_barcode_scanner_settings_endpoint(
     db: Session = Depends(get_db)
 ):
     """새로운 바코드 스캐너 설정 생성"""
-    from app.crud.barcode_scanner import create_barcode_scanner_settings
+    from app.crud.barcode import create_barcode_scanner_settings
     return create_barcode_scanner_settings(db, settings)
 
 
@@ -375,7 +375,7 @@ def update_barcode_scanner_settings_endpoint(
     db: Session = Depends(get_db)
 ):
     """바코드 스캐너 설정 업데이트"""
-    from app.crud.barcode_scanner import update_barcode_scanner_settings
+    from app.crud.barcode import update_barcode_scanner_settings
     db_settings = update_barcode_scanner_settings(db, settings_id, settings)
     if not db_settings:
         raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
@@ -388,7 +388,7 @@ def delete_barcode_scanner_settings_endpoint(
     db: Session = Depends(get_db)
 ):
     """바코드 스캐너 설정 삭제"""
-    from app.crud.barcode_scanner import delete_barcode_scanner_settings
+    from app.crud.barcode import delete_barcode_scanner_settings
     success = delete_barcode_scanner_settings(db, settings_id)
     if not success:
         raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
@@ -401,7 +401,7 @@ def activate_barcode_scanner_settings_endpoint(
     db: Session = Depends(get_db)
 ):
     """바코드 스캐너 설정 활성화"""
-    from app.crud.barcode_scanner import activate_barcode_scanner_settings
+    from app.crud.barcode import activate_barcode_scanner_settings
     db_settings = activate_barcode_scanner_settings(db, settings_id)
     if not db_settings:
         raise HTTPException(status_code=404, detail="바코드 스캐너 설정을 찾을 수 없습니다")
@@ -462,7 +462,7 @@ async def connect_barcode_scanner(
         if connection.is_open:
             # 연결 테스트 성공 - 설정을 데이터베이스에 저장
             try:
-                from app.crud.barcode_scanner import create_barcode_scanner_settings
+                from app.crud.barcode import create_barcode_scanner_settings
                 db_settings = create_barcode_scanner_settings(db, settings)
                 
                 # 바코드 상태 업데이트
@@ -587,7 +587,7 @@ async def start_barcode_listening(db: Session = Depends(get_db)):
     try:
         # 데이터베이스에서 활성 설정 조회
         print(f"🔍 [BACKEND] 활성화된 바코드 스캐너 설정 조회 중...")
-        from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+        from app.crud.barcode import get_active_barcode_scanner_settings
         active_settings = get_active_barcode_scanner_settings(db)
         if not active_settings:
             print(f"❌ [BACKEND] 활성화된 바코드 스캐너 설정이 없음")
@@ -740,7 +740,7 @@ async def get_barcode_status(db: Session = Depends(get_db)):
 
     try:
         # 데이터베이스에서 활성 설정 조회
-        from app.crud.barcode_scanner import get_active_barcode_scanner_settings
+        from app.crud.barcode import get_active_barcode_scanner_settings
         active_settings = get_active_barcode_scanner_settings(db)
         
         # 실제 시리얼 포트 연결 상태 확인
@@ -967,208 +967,6 @@ def test_power_meter_idn(connection: ConnectionRequest) -> Any:
             code="UNKNOWN_ERROR",
             message=f"테스트 실패: {str(e)}"
         )
-
-# 검사 타이머 설정 관련 엔드포인트들
-
-# 모든 검사 타이머 설정 조회 (모델별 포함)
-@router.get("/inspection-timer/all-settings", response_model=List[schemas.InspectionTimerSettingsResponse])
-async def get_all_inspection_timer_settings(
-    db: Session = Depends(get_db),
-    inspection_model_id: Optional[int] = None
-):
-    """모든 검사 타이머 설정을 조회합니다. 검사 모델 ID로 필터링 가능합니다."""
-    try:
-        if inspection_model_id is not None:
-            # 특정 검사 모델의 설정들만 조회
-            settings = crud.inspection_timer_settings.get_by_model(
-                db=db, inspection_model_id=inspection_model_id
-            )
-        else:
-            # 모든 설정 조회
-            settings = crud.inspection_timer_settings.get_multi(db=db)
-
-        return settings
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 조회 실패: {str(e)}")
-
-
-# 검사 타이머 설정 생성
-@router.post("/inspection-timer/create", response_model=schemas.InspectionTimerSettingsResponse)
-async def create_inspection_timer_settings(
-    *,
-    db: Session = Depends(get_db),
-    settings_in: schemas.InspectionTimerSettingsCreate
-):
-    """새로운 검사 타이머 설정을 생성합니다."""
-    try:
-        # 검사 모델 ID가 제공된 경우 해당 모델이 존재하는지 확인
-        if settings_in.inspection_model_id is not None:
-            inspection_model = crud.inspection_model.get(db=db, id=settings_in.inspection_model_id)
-            if not inspection_model:
-                raise HTTPException(status_code=404, detail="검사 모델을 찾을 수 없습니다")
-
-        settings = crud.inspection_timer_settings.create(db=db, obj_in=settings_in)
-        return settings
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 생성 실패: {str(e)}")
-
-
-# 검사 타이머 설정 활성화
-@router.post("/inspection-timer/{settings_id}/activate", response_model=schemas.InspectionTimerSettingsResponse)
-async def activate_inspection_timer_settings(
-    *,
-    db: Session = Depends(get_db),
-    settings_id: int
-):
-    """특정 검사 타이머 설정을 활성화합니다."""
-    try:
-        settings = crud.inspection_timer_settings.set_active(db=db, settings_id=settings_id)
-        if not settings:
-            raise HTTPException(status_code=404, detail="검사 타이머 설정을 찾을 수 없습니다")
-
-        return settings
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 활성화 실패: {str(e)}")
-
-
-@router.get("/inspection-timer/settings")
-async def get_inspection_timer_settings(
-    db: Session = Depends(get_db)
-):
-    """검사 타이머 설정 조회"""
-    try:
-        # 현재 활성화된 설정을 조회하거나 기본 설정을 생성
-        settings = crud.inspection_timer_settings.get_current_settings(db=db)
-
-        # 프론트엔드 호환성을 위해 기존 형식으로 반환
-        return {
-            "p1PrepareTime": settings.p1_prepare_time,
-            "p1Duration": settings.p1_duration,
-            "p2PrepareTime": settings.p2_prepare_time,
-            "p2Duration": settings.p2_duration,
-            "p3PrepareTime": settings.p3_prepare_time,
-            "p3Duration": settings.p3_duration,
-            "autoProgress": settings.auto_progress
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 조회 실패: {str(e)}")
-
-
-@router.post("/inspection-timer/settings")
-async def save_inspection_timer_settings(
-    *,
-    db: Session = Depends(get_db),
-    p1PrepareTime: int = Body(...),
-    p1Duration: int = Body(...),
-    p2PrepareTime: int = Body(...),
-    p2Duration: int = Body(...),
-    p3PrepareTime: int = Body(...),
-    p3Duration: int = Body(...),
-    autoProgress: bool = Body(...)
-):
-    """검사 타이머 설정 저장"""
-    try:
-        # 유효성 검사
-        if any(duration < 1 for duration in [p1Duration, p2Duration, p3Duration]):
-            raise HTTPException(status_code=400, detail="검사 지속시간은 1초 이상이어야 합니다")
-
-        if any(prepare < 0 for prepare in [p1PrepareTime, p2PrepareTime, p3PrepareTime]):
-            raise HTTPException(status_code=400, detail="준비시간은 0초 이상이어야 합니다")
-
-        # 현재 활성화된 설정을 가져오거나 기본 설정을 생성
-        current_settings = crud.inspection_timer_settings.get_current_settings(db=db)
-
-        # 설정 업데이트
-        update_data = schemas.InspectionTimerSettingsUpdate(
-            p1_prepare_time=p1PrepareTime,
-            p1_duration=p1Duration,
-            p2_prepare_time=p2PrepareTime,
-            p2_duration=p2Duration,
-            p3_prepare_time=p3PrepareTime,
-            p3_duration=p3Duration,
-            auto_progress=autoProgress
-        )
-
-        updated_settings = crud.inspection_timer_settings.update(
-            db=db,
-            db_obj=current_settings,
-            obj_in=update_data
-        )
-
-        return {
-            "success": True,
-            "message": "검사 타이머 설정이 저장되었습니다",
-            "settings": {
-                "p1PrepareTime": updated_settings.p1_prepare_time,
-                "p1Duration": updated_settings.p1_duration,
-                "p2PrepareTime": updated_settings.p2_prepare_time,
-                "p2Duration": updated_settings.p2_duration,
-                "p3PrepareTime": updated_settings.p3_prepare_time,
-                "p3Duration": updated_settings.p3_duration,
-                "autoProgress": updated_settings.auto_progress
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 저장 실패: {str(e)}")
-
-
-# 검사 타이머 설정 수정
-@router.put("/inspection-timer/{settings_id}", response_model=schemas.InspectionTimerSettingsResponse)
-async def update_inspection_timer_settings(
-    *,
-    db: Session = Depends(get_db),
-    settings_id: int,
-    settings_in: schemas.InspectionTimerSettingsUpdate
-):
-    """검사 타이머 설정을 수정합니다."""
-    try:
-        settings = crud.inspection_timer_settings.get(db=db, id=settings_id)
-        if not settings:
-            raise HTTPException(status_code=404, detail="검사 타이머 설정을 찾을 수 없습니다")
-
-        # 검사 모델 ID가 변경된 경우 해당 모델이 존재하는지 확인
-        if settings_in.inspection_model_id is not None:
-            inspection_model = crud.inspection_model.get(db=db, id=settings_in.inspection_model_id)
-            if not inspection_model:
-                raise HTTPException(status_code=404, detail="검사 모델을 찾을 수 없습니다")
-
-        updated_settings = crud.inspection_timer_settings.update(
-            db=db, db_obj=settings, obj_in=settings_in
-        )
-        return updated_settings
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 수정 실패: {str(e)}")
-
-
-# 검사 타이머 설정 삭제
-@router.delete("/inspection-timer/{settings_id}", response_model=schemas.InspectionTimerSettingsResponse)
-async def delete_inspection_timer_settings(
-    *,
-    db: Session = Depends(get_db),
-    settings_id: int
-):
-    """검사 타이머 설정을 삭제합니다."""
-    try:
-        settings = crud.inspection_timer_settings.get(db=db, id=settings_id)
-        if not settings:
-            raise HTTPException(status_code=404, detail="검사 타이머 설정을 찾을 수 없습니다")
-
-        deleted_settings = crud.inspection_timer_settings.remove(db=db, id=settings_id)
-        return deleted_settings
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"검사 타이머 설정 삭제 실패: {str(e)}")
-
-
 # Device Command 관리 API
 @router.get("/{device_id}/commands", response_model=List[schemas.DeviceCommandResponse])
 def get_device_commands(
@@ -1974,4 +1772,4 @@ def stop_barcode_task():
     if _barcode_task and not _barcode_task.done():
         _barcode_task.cancel()
         _barcode_task = None
-        print("바코드 수신 태스크 중지됨")
+        print("바코드 수신 태스크 중지됨") 

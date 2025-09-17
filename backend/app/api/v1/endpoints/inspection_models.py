@@ -29,7 +29,7 @@ def create_inspection_model(
     if existing_model:
         raise HTTPException(status_code=400, detail="Model name already exists")
     
-    inspection_model = crud.inspection_model.create(db=db, obj_in=inspection_model_in)
+    inspection_model = crud.inspection_model.create_with_steps(db=db, obj_in=inspection_model_in)
     return inspection_model
 
 @router.get("/{id}", response_model=schemas.InspectionModelResponse)
@@ -62,7 +62,7 @@ def update_inspection_model(
         if existing_model and existing_model.id != id:
             raise HTTPException(status_code=400, detail="Model name already exists")
     
-    inspection_model = crud.inspection_model.update(db=db, db_obj=inspection_model, obj_in=inspection_model_in)
+    inspection_model = crud.inspection_model.update_with_steps(db=db, db_obj=inspection_model, obj_in=inspection_model_in)
     return inspection_model
 
 @router.delete("/{id}", response_model=schemas.InspectionModelResponse)

@@ -1,10 +1,14 @@
+"""
+로그 관련 CRUD
+- SystemLog: 시스템 로그 CRUD
+"""
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.crud.base import CRUDBase
-from app.models.system_log import SystemLog, LogLevel, LogCategory
-from app.schemas.system_log import SystemLogCreate, SystemLogUpdate
+from app.models.log import SystemLog, LogLevel, LogCategory
+from app.schemas.log import SystemLogCreate, SystemLogUpdate
 
 class CRUDSystemLog(CRUDBase[SystemLog, SystemLogCreate, SystemLogUpdate]):
     def get_by_level(self, db: Session, *, level: LogLevel, skip: int = 0, limit: int = 100) -> List[SystemLog]:

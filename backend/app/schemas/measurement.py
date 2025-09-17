@@ -10,10 +10,8 @@ class MeasurementResult(str, Enum):
     ERROR = "ERROR"
 
 class MeasurementPhase(str, Enum):
-    """측정 단계 열거형"""
-    P1 = "P1"
-    P2 = "P2" 
-    P3 = "P3"
+    """측정 단계 열거형 - 연속 측정용"""
+    CONTINUOUS = "CONTINUOUS"
 
 class MeasurementBase(BaseModel):
     barcode: str

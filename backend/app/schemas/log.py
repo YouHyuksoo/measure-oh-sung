@@ -1,3 +1,7 @@
+"""
+로그 관련 스키마
+- SystemLog: 시스템 로그 스키마
+"""
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime

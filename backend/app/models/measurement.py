@@ -10,10 +10,8 @@ class MeasurementResult(str, Enum):
     ERROR = "ERROR"
 
 class MeasurementPhase(str, Enum):
-    """측정 단계 열거형"""
-    P1 = "P1"
-    P2 = "P2" 
-    P3 = "P3"
+    """측정 단계 열거형 - 연속 측정용"""
+    CONTINUOUS = "CONTINUOUS"
 
 class Measurement(Base, TimestampMixin):
     """측정 데이터 테이블"""
@@ -28,7 +26,7 @@ class Measurement(Base, TimestampMixin):
     inspection_model = relationship("InspectionModel")
     
     # 측정 단계
-    phase = Column(SQLEnum(MeasurementPhase), nullable=False, comment="측정 단계 (P1/P2/P3)")
+    phase = Column(SQLEnum(MeasurementPhase), nullable=False, comment="측정 단계 (연속 측정)")
     
     # 측정 데이터 (JSON 형태로 실시간 수집된 모든 값들 저장)
     raw_data = Column(JSON, comment="실시간 수집된 원시 데이터 배열")

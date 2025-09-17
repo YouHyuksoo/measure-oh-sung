@@ -5,8 +5,8 @@ from pydantic import BaseModel
 
 from app import crud
 from app.db.database import get_db
-from app.services.serial_communication import serial_service
-from app.services.scpi_commands import scpi_service
+from app.services.serial import serial_service
+from app.services.scpi import scpi_service
 
 router = APIRouter()
 

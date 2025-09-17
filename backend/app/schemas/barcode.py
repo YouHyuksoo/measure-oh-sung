@@ -1,7 +1,10 @@
+"""
+바코드 관련 스키마
+- BarcodeScannerSettings: 바코드 스캐너 설정 스키마
+"""
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-
 
 class BarcodeScannerSettingsBase(BaseModel):
     port: str
@@ -13,10 +16,8 @@ class BarcodeScannerSettingsBase(BaseModel):
     is_active: bool = True
     description: Optional[str] = None
 
-
 class BarcodeScannerSettingsCreate(BarcodeScannerSettingsBase):
     pass
-
 
 class BarcodeScannerSettingsUpdate(BaseModel):
     port: Optional[str] = None
@@ -28,7 +29,6 @@ class BarcodeScannerSettingsUpdate(BaseModel):
     is_active: Optional[bool] = None
     description: Optional[str] = None
 
-
 class BarcodeScannerSettingsResponse(BarcodeScannerSettingsBase):
     id: int
     created_at: datetime
@@ -37,7 +37,6 @@ class BarcodeScannerSettingsResponse(BarcodeScannerSettingsBase):
     class Config:
         from_attributes = True
 
-
 class BarcodeScannerStatus(BaseModel):
     is_connected: bool
     is_listening: bool
@@ -45,7 +44,6 @@ class BarcodeScannerStatus(BaseModel):
     last_barcode: Optional[str] = None
     scan_count: int = 0
     settings: Optional[BarcodeScannerSettingsResponse] = None
-
 
 class BarcodeTestResult(BaseModel):
     success: bool

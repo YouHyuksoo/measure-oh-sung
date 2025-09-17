@@ -39,18 +39,25 @@ import {
 } from "lucide-react";
 import { apiClient } from "@/lib/api";
 
+interface InspectionStep {
+  id: number;
+  step_name: string;
+  step_order: number;
+  lower_limit: number;
+  upper_limit: number;
+  inspection_model_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface InspectionModel {
   id: number;
   model_name: string;
   description?: string;
-  p1_lower_limit: number;
-  p1_upper_limit: number;
-  p2_lower_limit: number;
-  p2_upper_limit: number;
-  p3_lower_limit: number;
-  p3_upper_limit: number;
   is_active: boolean;
+  inspection_steps: InspectionStep[];
   created_at: string;
+  updated_at: string;
 }
 
 export default function InspectionModelsPage() {
@@ -65,15 +72,14 @@ export default function InspectionModelsPage() {
 
   // 폼 상태
   const [formData, setFormData] = useState({
-    name: "",
+    model_name: "",
     description: "",
-    barcode_pattern: "",
-    p1_min_value: 0,
-    p1_max_value: 100,
-    p2_min_value: 0,
-    p2_max_value: 100,
-    p3_min_value: 0,
-    p3_max_value: 100,
+    inspection_steps: [] as Array<{
+      step_name: string;
+      step_order: number;
+      lower_limit: number;
+      upper_limit: number;
+    }>,
   });
 
   // 데이터 로드
@@ -99,16 +105,25 @@ export default function InspectionModelsPage() {
     setIsSubmitting(true);
 
     try {
+      // 검사단계가 있는지 확인
+      if (formData.inspection_steps.length === 0) {
+        setError("최소 하나의 검사단계를 추가해주세요");
+        setIsSubmitting(false);
+        return;
+      }
+
       // 백엔드 스키마에 맞게 데이터 변환
       const backendData = {
-        model_name: formData.name,
+        model_name: formData.model_name,
         description: formData.description,
-        p1_lower_limit: formData.p1_min_value,
-        p1_upper_limit: formData.p1_max_value,
-        p2_lower_limit: formData.p2_min_value,
-        p2_upper_limit: formData.p2_max_value,
-        p3_lower_limit: formData.p3_min_value,
-        p3_upper_limit: formData.p3_max_value,
+        inspection_steps: formData.inspection_steps
+          .filter((step) => step)
+          .map((step, index) => ({
+            step_name: step.step_name,
+            step_order: step.step_order || index + 1,
+            lower_limit: step.lower_limit,
+            upper_limit: step.upper_limit,
+          })),
       };
 
       await apiClient.createInspectionModel(backendData);
@@ -130,16 +145,25 @@ export default function InspectionModelsPage() {
 
     setIsSubmitting(true);
     try {
+      // 검사단계가 있는지 확인
+      if (formData.inspection_steps.length === 0) {
+        setError("최소 하나의 검사단계를 추가해주세요");
+        setIsSubmitting(false);
+        return;
+      }
+
       // 백엔드 스키마에 맞게 데이터 변환
       const backendData = {
-        model_name: formData.name,
+        model_name: formData.model_name,
         description: formData.description,
-        p1_lower_limit: formData.p1_min_value,
-        p1_upper_limit: formData.p1_max_value,
-        p2_lower_limit: formData.p2_min_value,
-        p2_upper_limit: formData.p2_max_value,
-        p3_lower_limit: formData.p3_min_value,
-        p3_upper_limit: formData.p3_max_value,
+        inspection_steps: formData.inspection_steps
+          .filter((step) => step)
+          .map((step, index) => ({
+            step_name: step.step_name,
+            step_order: step.step_order || index + 1,
+            lower_limit: step.lower_limit,
+            upper_limit: step.upper_limit,
+          })),
       };
 
       await apiClient.updateInspectionModel(editingModel.id, backendData);
@@ -181,12 +205,6 @@ export default function InspectionModelsPage() {
         const backendData = {
           model_name: model.model_name,
           description: model.description,
-          p1_lower_limit: model.p1_lower_limit,
-          p1_upper_limit: model.p1_upper_limit,
-          p2_lower_limit: model.p2_lower_limit,
-          p2_upper_limit: model.p2_upper_limit,
-          p3_lower_limit: model.p3_lower_limit,
-          p3_upper_limit: model.p3_upper_limit,
           is_active: !model.is_active,
         };
 
@@ -205,15 +223,14 @@ export default function InspectionModelsPage() {
   const startEditing = (model: InspectionModel) => {
     setEditingModel(model);
     setFormData({
-      name: model.model_name,
+      model_name: model.model_name,
       description: model.description || "",
-      barcode_pattern: "",
-      p1_min_value: model.p1_lower_limit,
-      p1_max_value: model.p1_upper_limit,
-      p2_min_value: model.p2_lower_limit,
-      p2_max_value: model.p2_upper_limit,
-      p3_min_value: model.p3_lower_limit,
-      p3_max_value: model.p3_upper_limit,
+      inspection_steps: model.inspection_steps.map((step) => ({
+        step_name: step.step_name,
+        step_order: step.step_order,
+        lower_limit: step.lower_limit,
+        upper_limit: step.upper_limit,
+      })),
     });
     setIsDialogOpen(true);
   };
@@ -226,15 +243,9 @@ export default function InspectionModelsPage() {
 
   const resetForm = () => {
     setFormData({
-      name: "",
+      model_name: "",
       description: "",
-      barcode_pattern: "",
-      p1_min_value: 0,
-      p1_max_value: 100,
-      p2_min_value: 0,
-      p2_max_value: 100,
-      p3_min_value: 0,
-      p3_max_value: 100,
+      inspection_steps: [],
     });
   };
 
@@ -242,6 +253,67 @@ export default function InspectionModelsPage() {
     setIsDialogOpen(false);
     setEditingModel(null);
     resetForm();
+  };
+
+  // 검사단계 관리 함수들
+  const addInspectionStep = () => {
+    const newStep = {
+      step_name: "",
+      step_order: formData.inspection_steps.length + 1,
+      lower_limit: 0,
+      upper_limit: 100,
+    };
+    setFormData((prev) => ({
+      ...prev,
+      inspection_steps: [...prev.inspection_steps, newStep],
+    }));
+  };
+
+  const removeInspectionStep = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      inspection_steps: prev.inspection_steps
+        .filter((_, i) => i !== index)
+        .map((step, i) => ({ ...step, step_order: i + 1 })),
+    }));
+  };
+
+  const updateInspectionStep = (index: number, field: string, value: any) => {
+    setFormData((prev) => ({
+      ...prev,
+      inspection_steps: prev.inspection_steps.map((step, i) =>
+        i === index ? { ...step, [field]: value } : step
+      ),
+    }));
+  };
+
+  const moveInspectionStep = (index: number, direction: "up" | "down") => {
+    const steps = [...formData.inspection_steps].filter(
+      (step) => step
+    ) as Array<{
+      step_name: string;
+      step_order: number;
+      lower_limit: number;
+      upper_limit: number;
+    }>;
+    const newIndex = direction === "up" ? index - 1 : index + 1;
+
+    if (newIndex >= 0 && newIndex < steps.length) {
+      const temp = steps[index]!;
+      steps[index] = steps[newIndex]!;
+      steps[newIndex] = temp;
+
+      // 순서 재정렬
+      const reorderedSteps = steps.map((step, i) => ({
+        ...step,
+        step_order: i + 1,
+      }));
+
+      setFormData((prev) => ({
+        ...prev,
+        inspection_steps: reorderedSteps,
+      }));
+    }
   };
 
   return (
@@ -348,49 +420,61 @@ export default function InspectionModelsPage() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
-                  {/* 측정 기준값 */}
+                  {/* 검사단계 목록 */}
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                      <h4 className="text-sm font-medium">측정 기준값</h4>
+                      <h4 className="text-sm font-medium">
+                        검사단계 ({model.inspection_steps.length}개)
+                      </h4>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2">
-                      {/* P1 */}
-                      <div className="p-3 rounded-lg border-l-4 bg-blue-50 border-blue-500">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium text-sm text-blue-700">
-                            P1 단계
-                          </span>
-                          <span className="font-mono text-sm text-blue-600">
-                            {model.p1_lower_limit} - {model.p1_upper_limit}
-                          </span>
+                    <div className="space-y-2">
+                      {model.inspection_steps.length > 0 ? (
+                        model.inspection_steps
+                          .sort((a, b) => a.step_order - b.step_order)
+                          .map((step, index) => (
+                            <div
+                              key={step.id}
+                              className={`p-3 rounded-lg border-l-4 ${
+                                index % 3 === 0
+                                  ? "bg-blue-50 border-blue-500"
+                                  : index % 3 === 1
+                                  ? "bg-green-50 border-green-500"
+                                  : "bg-purple-50 border-purple-500"
+                              }`}
+                            >
+                              <div className="flex justify-between items-center">
+                                <span
+                                  className={`font-medium text-sm ${
+                                    index % 3 === 0
+                                      ? "text-blue-700"
+                                      : index % 3 === 1
+                                      ? "text-green-700"
+                                      : "text-purple-700"
+                                  }`}
+                                >
+                                  {step.step_order}. {step.step_name}
+                                </span>
+                                <span
+                                  className={`font-mono text-sm ${
+                                    index % 3 === 0
+                                      ? "text-blue-600"
+                                      : index % 3 === 1
+                                      ? "text-green-600"
+                                      : "text-purple-600"
+                                  }`}
+                                >
+                                  {step.lower_limit} - {step.upper_limit}
+                                </span>
+                              </div>
+                            </div>
+                          ))
+                      ) : (
+                        <div className="p-3 rounded-lg border border-dashed text-center text-muted-foreground">
+                          검사단계가 없습니다
                         </div>
-                      </div>
-
-                      {/* P2 */}
-                      <div className="p-3 rounded-lg border-l-4 bg-green-50 border-green-500">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium text-sm text-green-700">
-                            P2 단계
-                          </span>
-                          <span className="font-mono text-sm text-green-600">
-                            {model.p2_lower_limit} - {model.p2_upper_limit}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* P3 */}
-                      <div className="p-3 rounded-lg border-l-4 bg-purple-50 border-purple-500">
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium text-sm text-purple-700">
-                            P3 단계
-                          </span>
-                          <span className="font-mono text-sm text-purple-600">
-                            {model.p3_lower_limit} - {model.p3_upper_limit}
-                          </span>
-                        </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
@@ -461,14 +545,14 @@ export default function InspectionModelsPage() {
                 {/* 기본 정보 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">모델명 *</Label>
+                    <Label htmlFor="model_name">모델명 *</Label>
                     <Input
-                      id="name"
-                      value={formData.name}
+                      id="model_name"
+                      value={formData.model_name}
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          name: e.target.value,
+                          model_name: e.target.value,
                         }))
                       }
                       placeholder="검사 모델명을 입력하세요"
@@ -492,142 +576,149 @@ export default function InspectionModelsPage() {
                   </div>
                 </div>
 
-                {/* 측정 기준값 - 3단계 가로 배치 */}
+                {/* 검사단계 관리 */}
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Settings className="h-5 w-5" />
-                    측정 기준값
-                  </h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <Settings className="h-5 w-5" />
+                      검사단계 관리
+                    </h3>
+                    <Button
+                      type="button"
+                      onClick={addInspectionStep}
+                      variant="outline"
+                      size="sm"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      검사단계 추가
+                    </Button>
+                  </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    {/* P1 단계 */}
-                    <div className="border rounded-lg p-4 space-y-3 bg-blue-50">
-                      <h4 className="font-medium text-blue-700">P1 단계</h4>
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="p1_min" className="text-sm">
-                            최소값
-                          </Label>
-                          <Input
-                            id="p1_min"
-                            type="number"
-                            step="0.01"
-                            value={formData.p1_min_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p1_min_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="p1_max" className="text-sm">
-                            최대값
-                          </Label>
-                          <Input
-                            id="p1_max"
-                            type="number"
-                            step="0.01"
-                            value={formData.p1_max_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p1_max_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
+                  <div className="space-y-3">
+                    {formData.inspection_steps.length === 0 ? (
+                      <div className="p-8 border-2 border-dashed rounded-lg text-center text-muted-foreground">
+                        <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p className="text-lg font-medium mb-2">
+                          검사단계가 없습니다
+                        </p>
+                        <p className="text-sm">
+                          위의 &quot;검사단계 추가&quot; 버튼을 클릭하여 첫 번째
+                          검사단계를 추가하세요.
+                        </p>
                       </div>
-                    </div>
+                    ) : (
+                      formData.inspection_steps.map((step, index) => (
+                        <div
+                          key={index}
+                          className={`border rounded-lg p-4 space-y-3 ${
+                            index % 3 === 0
+                              ? "bg-blue-50 border-blue-200"
+                              : index % 3 === 1
+                              ? "bg-green-50 border-green-200"
+                              : "bg-purple-50 border-purple-200"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <h4
+                              className={`font-medium ${
+                                index % 3 === 0
+                                  ? "text-blue-700"
+                                  : index % 3 === 1
+                                  ? "text-green-700"
+                                  : "text-purple-700"
+                              }`}
+                            >
+                              {step.step_order}. 검사단계
+                            </h4>
+                            <div className="flex gap-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => moveInspectionStep(index, "up")}
+                                disabled={index === 0}
+                                className="h-6 w-6"
+                              >
+                                ↑
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() =>
+                                  moveInspectionStep(index, "down")
+                                }
+                                disabled={
+                                  index === formData.inspection_steps.length - 1
+                                }
+                                className="h-6 w-6"
+                              >
+                                ↓
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeInspectionStep(index)}
+                                className="h-6 w-6 text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
 
-                    {/* P2 단계 */}
-                    <div className="border rounded-lg p-4 space-y-3 bg-green-50">
-                      <h4 className="font-medium text-green-700">P2 단계</h4>
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="p2_min" className="text-sm">
-                            최소값
-                          </Label>
-                          <Input
-                            id="p2_min"
-                            type="number"
-                            step="0.01"
-                            value={formData.p2_min_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p2_min_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="space-y-2">
+                              <Label className="text-sm">검사항목명 *</Label>
+                              <Input
+                                value={step.step_name}
+                                onChange={(e) =>
+                                  updateInspectionStep(
+                                    index,
+                                    "step_name",
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="예: 절연저항 측정"
+                                required
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-sm">하한값 *</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={step.lower_limit}
+                                onChange={(e) =>
+                                  updateInspectionStep(
+                                    index,
+                                    "lower_limit",
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                required
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-sm">상한값 *</Label>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={step.upper_limit}
+                                onChange={(e) =>
+                                  updateInspectionStep(
+                                    index,
+                                    "upper_limit",
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                required
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="p2_max" className="text-sm">
-                            최대값
-                          </Label>
-                          <Input
-                            id="p2_max"
-                            type="number"
-                            step="0.01"
-                            value={formData.p2_max_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p2_max_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* P3 단계 */}
-                    <div className="border rounded-lg p-4 space-y-3 bg-purple-50">
-                      <h4 className="font-medium text-purple-700">P3 단계</h4>
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="p3_min" className="text-sm">
-                            최소값
-                          </Label>
-                          <Input
-                            id="p3_min"
-                            type="number"
-                            step="0.01"
-                            value={formData.p3_min_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p3_min_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="p3_max" className="text-sm">
-                            최대값
-                          </Label>
-                          <Input
-                            id="p3_max"
-                            type="number"
-                            step="0.01"
-                            value={formData.p3_max_value}
-                            onChange={(e) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                p3_max_value: parseFloat(e.target.value) || 0,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>

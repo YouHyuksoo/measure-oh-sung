@@ -1,7 +1,10 @@
+"""
+바코드 관련 모델
+- BarcodeScannerSettings: 바코드 스캐너 설정
+"""
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.sql import func
 from .base import Base
-
 
 class BarcodeScannerSettings(Base):
     """바코드 스캐너 설정 모델"""
