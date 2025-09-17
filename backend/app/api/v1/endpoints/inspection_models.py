@@ -15,7 +15,39 @@ def read_inspection_models(
 ) -> Any:
     """모든 검사 모델을 조회합니다."""
     inspection_models = crud.inspection_model.get_multi(db, skip=skip, limit=limit)
-    return inspection_models
+    
+    # 새로운 딕셔너리 리스트로 변환
+    result = []
+    for model in inspection_models:
+        model_dict = {
+            "id": model.id,
+            "model_name": model.model_name,
+            "description": model.description,
+            "is_active": model.is_active,
+            "created_at": model.created_at,
+            "updated_at": model.updated_at,
+            "inspection_steps": []
+        }
+        
+        # inspection_steps를 딕셔너리로 변환
+        if hasattr(model, 'inspection_steps') and model.inspection_steps:
+            model_dict["inspection_steps"] = [
+                {
+                    "id": step.id,
+                    "step_name": step.step_name,
+                    "step_order": step.step_order,
+                    "lower_limit": step.lower_limit,
+                    "upper_limit": step.upper_limit,
+                    "inspection_model_id": step.inspection_model_id,
+                    "created_at": step.created_at,
+                    "updated_at": step.updated_at
+                }
+                for step in model.inspection_steps
+            ]
+        
+        result.append(model_dict)
+    
+    return result
 
 @router.post("/", response_model=schemas.InspectionModelResponse)
 def create_inspection_model(
